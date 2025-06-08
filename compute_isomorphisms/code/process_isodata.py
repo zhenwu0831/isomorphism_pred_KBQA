@@ -289,6 +289,84 @@ def validate_relations():
     # import pdb; pdb.set_trace()
 
 
+def filter_grailqa_isomorphisms():
+
+    datasets = ['grailqa']# 'webqsp', 'graphquestions', 'cwq']
+
+    splits  = {
+            'grailqa': ['train', 'dev'], 
+            }
+    
+    isomorphism_dict = ddict(lambda: ddict(lambda: ddict(int)))
+
+    valid_isomorphisms = ['T-0', 'T-1', 'T-2', 'T-3', 'T-4','T-5']
+
+    for dataset in datasets:
+        for split in splits[dataset]:
+
+            iso_data_path                                  = f'../output_data/{dataset}.{split}.json'
+            iso_data                                       = json.load(open(iso_data_path))
+
+            only_questions_data                            = []
+            filtered_iso_data                              = []
+            filtered_iso_data_path                         = f'../output_data/{dataset}.{split}.filtered.json'
+
+            question_only_data                             = []
+            question_only_data_path                        = f'../iso_data/{dataset}.{split}.question_only.json'
+
+
+            print(f'Filtering isomorphisms for {dataset} {split} with {len(iso_data)} queries')
+
+            filtered_iso_data                             = []
+
+            for line in tqdm(iso_data):
+
+                gq_iso_num      = line.get('gq_iso_num', None)
+                sexpr_iso_num   = line.get('sexpr_iso_num', None)
+
+                if gq_iso_num  == sexpr_iso_num:
+
+                    if gq_iso_num in valid_isomorphisms:
+
+                        isomorphism_dict[dataset][split][gq_iso_num] += 1
+                        isomorphism_dict[dataset][split]['total'] += 1
+
+                        filtered_iso_data.append(line)
+            
+            with open(filtered_iso_data_path, 'w') as f:
+                json.dump(filtered_iso_data, f, indent=4)
+
+
+            qonly_data          = []
+            for elem in filtered_iso_data:
+                curr_dict      = {}
+
+                curr_dict['qid']            = elem['qid']
+                curr_dict['question']       = elem['question']
+                curr_dict['s_expression']   = elem['s_expression']
+                curr_dict['isomorphism']    = elem['sexpr_iso_num']
+
+                qonly_data.append(curr_dict)
+            
+            with open(question_only_data_path, 'w') as f:
+                json.dump(qonly_data, f, indent=4)
+            
+
+            
+            print(f'Filtered data for {dataset} {split} is {len(filtered_iso_data)} ')
+            print(f'Original data for {dataset} {split} is {len(iso_data)}')
+        
+    
+
+        
+        
+    for dataset in datasets:
+        for split in isomorphism_dict[dataset]:
+            pprint(isomorphism_dict[dataset][split])
+
+            
+            
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process isomorphism datasets')
@@ -301,3 +379,6 @@ if __name__ == '__main__':
     
     if args.step == 'val_rel':
         validate_relations()
+    
+    if args.step == 'filter_grailqa':
+        filter_grailqa_isomorphisms()
