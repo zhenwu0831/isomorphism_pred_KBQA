@@ -82,6 +82,8 @@ target/
 
 ckpts/
 unused_code/
+compute_isomorphisms/input_data/
+compute_isomorphisms/output_data/
 
 requirements.txt
 

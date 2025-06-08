@@ -387,42 +387,7 @@ def create_dataset_splits():
         with open(f'../output_data/{dataset}_level.json', 'w') as f:
             json.dump(level_dict, f, indent=4)
 
-
-# create_dataset_splits()
-
-def conv_sexpr2QG():
-
-    for split in ['train', 'dev', 'test']:
-        # read a jsonl file
-        iso_data                = []        
-        with open(f'/data/shire/projects/GenQA/GNN_codes/codistill-KBQA/data/webqsp/{split}.jsonl') as f:
-            for line in f:
-                curr_data                         = json.loads(line.strip())
-                s_expr                            = curr_data['s_expression']
-                query_graph, G                    = get_query_graph(s_expr)
-                curr_graph, qnid, tree_iso        = create_iso_graph(query_graph)
-
-
-                if tree_iso:
-                    iso_num                       =f'T-{get_isomorphism_id(curr_graph, qnid, update=False)}'
-                
-                else:
-                    iso_num                       =f'C-{get_non_tree_isomorphism_id(curr_graph, qnid, update=False)}'
-                
-                curr_data['isomorphism']          = iso_num
-                curr_data['tree_iso']             = tree_iso
-                
-                iso_data.append(curr_data)
-
-                print(iso_num, tree_iso, curr_data['question'], s_expr)
-
-        with open(f'/data/shire/projects/GenQA/GNN_codes/codistill-KBQA/data/webqsp/{split}_isomorphism.json', 'w') as f:
-            json.dump(iso_data, f, indent=4)
-
-            
-
 '''
-
 if tree_isomorphisms == []:
     with open('../../output_data/isomorphisms.dill', 'rb') as infile:
         tree_isomorphisms = dill.load(infile)
@@ -441,8 +406,6 @@ if non_tree_isomorphisms == []:
     with open('non-tree-isomorphisms.dill', 'rb') as infile:
         non_tree_isomorphisms = dill.load(infile)
 
-
-# conv_sexpr2QG()  # Call the function to convert s-expressions to query graphs
 
 
 

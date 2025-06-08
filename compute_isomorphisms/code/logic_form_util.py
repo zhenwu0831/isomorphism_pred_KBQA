@@ -8,7 +8,7 @@ import json
 
 REVERSE = True  # if REVERSE, then reverse relations are also taken into account for semantic EM
 
-path = str(Path(__file__).parent.absolute())
+path    = str(Path(__file__).parent.absolute())
 
 reverse_properties = {}
 with open('../../ontology/reverse_properties', 'r') as f:
