@@ -212,8 +212,8 @@ def validate_relations():
         srcs     = [src] + sub_srcs
         tgts     = [tgt] + sub_tgts
 
-        srcs     = [src]
-        tgts     = [tgt]
+        # srcs     = [src]
+        # tgts     = [tgt]
 
         for src in srcs:
             for tgt in tgts:
