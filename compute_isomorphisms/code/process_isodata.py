@@ -122,6 +122,8 @@ def validate_relations():
     reverse_properties_file     =  '../../ontology/reverse_properties'
     domain_dict_file            =  '../../ontology/domain_dict'
 
+    all_tuples_file             =  open('../../ontology/fb_tuples','w')
+
     domain_dict                 =  json.load(open(domain_dict_file))
 
     reverse_properties, relation_dr, relations, upper_types, types, common_rels = process_ontology(fb_roles_file, fb_types_file, reverse_properties_file)
@@ -171,16 +173,29 @@ def validate_relations():
     
     for type_ in upper_types:
 
-        if type_.startswith('common.')  or type_.startswith('kg.') or type_.startswith('user.') or type_.startswith('base.') or type_.startswith('freebase.'):
+        if type_.startswith('common.')  or type_.startswith('kg.') or type_.startswith('user.') or type_.startswith('base.') or type_.startswith('freebase.')  or type_.startswith('fb.'):
             continue
+        
+        try:
+            type2dom = classes2domains[type_]
+        except KeyError as e:
+            type2dom = type_.split('.')[0]
 
-        up_types = list(upper_types[type_])
+        up_types  = list(upper_types[type_])
 
         for up_type_ in up_types:
             
-            if up_type_.startswith('common.') or up_type_.startswith('kg.') or up_type_.startswith('user.') or up_type_.startswith('base.') or up_type_.startswith('freebase.'):
+            if up_type_.startswith('common.') or up_type_.startswith('kg.') or up_type_.startswith('user.') or up_type_.startswith('base.') or up_type_.startswith('freebase.') or up_type_.startswith('fb.'):
                 continue
             
+            try:
+                uptype2dom = classes2domains[up_type_]
+            except KeyError as e:
+                uptype2dom = up_type_.split('.')[0]
+            
+            # if uptype2dom != type2dom:
+            #     continue
+
             uptype_dict[type_].add(up_type_)
             lowtype_dict[up_type_].add(type_)
 
@@ -202,6 +217,8 @@ def validate_relations():
         rev_relations[reverse_properties[rel]] = rel
         rev_relations[rel] = reverse_properties[rel]
 
+    unique_tuples            = set()
+
     for rel in relation_dr:
 
         src, tgt = relation_dr[rel]
@@ -209,24 +226,36 @@ def validate_relations():
         sub_srcs = list(lowtype_dict[src])
         sub_tgts = list(lowtype_dict[tgt])
 
-        srcs     = [src] + sub_srcs
-        tgts     = [tgt] + sub_tgts
+        # srcs     = [src] + sub_srcs
+        # tgts     = [tgt] + sub_tgts
 
-        # srcs     = [src]
-        # tgts     = [tgt]
+        srcs     = [src]
+        tgts     = [tgt]
 
         for src in srcs:
             for tgt in tgts:
                 pairwise_rels[(src, tgt)].append(rel)
+                unique_tuples.add((src, tgt, rel))
+                
+
                 if rel in rev_relations:
                     pairwise_rels[(tgt, src)].append(rev_relations[rel])
+                    unique_tuples.add((tgt, src, rev_relations[rel]))
                 
     print(len(pairwise_rels), 'pairwise relations found')
+    print(len(unique_tuples), 'unique tuples found')
+
+    for elem in unique_tuples:
+        all_tuples_file.write(f'{elem[0]}\t{elem[2]}\t{elem[1]}\n')
+
 
     #### We now need to validate the relation coverage for each instance of the isomorphism dataset
 
     relation_coverage       = ddict(lambda: ddict(list))
     subgraph_size           = ddict(lambda: ddict(list))
+
+    diff_scenarios          = ddict(lambda: ddict(list))
+
 
     for dataset in datasets:
         for split in splits[dataset]:
@@ -274,8 +303,19 @@ def validate_relations():
 
                 coverage       =  (len(relations) - len(rem_relations))/ len(relations) 
 
+                # if coverage < 1:
+                    # import pdb; pdb.set_trace()
+
                 relation_coverage[dataset][split].append(coverage)
                 subgraph_size[dataset][split].append(len(poss_relations))
+
+                function        = line.get('function', None)
+                only_ents       = 1 if len(set([node['node_type'] for node in nodes])) == 2 else 2
+                isomorphism     = line.get('gq_iso_num', None)
+
+                diff_scenarios[f'{dataset}-{split}'][f'Function:{function}'].append(coverage)
+                diff_scenarios[f'{dataset}-{split}'][f'Entities:{only_ents}'].append(coverage)
+                diff_scenarios[f'{dataset}-{split}'][f'Isomorphism:{isomorphism}'].append(coverage)
 
         
 
@@ -285,8 +325,16 @@ def validate_relations():
                 avg_size = sum(subgraph_size[dataset][split]) / len(subgraph_size[dataset][split])
                 print(f'Average relation coverage for {dataset} {split}: {avg_cov:.4f}')
                 print(f'Average number of relations for {dataset} {split}: {avg_size:.4f}')
+            
 
-    # import pdb; pdb.set_trace()
+
+        for dataset in diff_scenarios:
+            for scenario in sorted(diff_scenarios[dataset]):
+                avg_cov = sum(diff_scenarios[dataset][scenario]) / len(diff_scenarios[dataset][scenario])
+                print(f'Average relation coverage for {dataset} {scenario}: {avg_cov:.4f}')
+            print()
+
+
 
 
 def filter_grailqa_isomorphisms():
@@ -294,7 +342,7 @@ def filter_grailqa_isomorphisms():
     datasets = ['grailqa']# 'webqsp', 'graphquestions', 'cwq']
 
     splits  = {
-            'grailqa': ['train', 'dev'], 
+            'grailqa': ['train', 'dev', 'test'], 
             }
     
     isomorphism_dict = ddict(lambda: ddict(lambda: ddict(int)))
@@ -307,7 +355,6 @@ def filter_grailqa_isomorphisms():
             iso_data_path                                  = f'../output_data/{dataset}.{split}.json'
             iso_data                                       = json.load(open(iso_data_path))
 
-            only_questions_data                            = []
             filtered_iso_data                              = []
             filtered_iso_data_path                         = f'../output_data/{dataset}.{split}.filtered.json'
 
@@ -346,22 +393,24 @@ def filter_grailqa_isomorphisms():
                 curr_dict['s_expression']   = elem['s_expression']
                 curr_dict['isomorphism']    = elem['sexpr_iso_num']
 
+                if 'level' in elem:
+                    curr_dict['level']      = elem['level']
+                elif split == 'train':
+                    curr_dict['level']      = 'i.i.d.'
+                elif split == 'test':
+                    curr_dict['level']      = 'zero-shot'
+
                 qonly_data.append(curr_dict)
             
             with open(question_only_data_path, 'w') as f:
                 json.dump(qonly_data, f, indent=4)
             
-
-            
             print(f'Filtered data for {dataset} {split} is {len(filtered_iso_data)} ')
             print(f'Original data for {dataset} {split} is {len(iso_data)}')
-        
-    
-
-        
-        
+                
     for dataset in datasets:
         for split in isomorphism_dict[dataset]:
+            print(f'Isomorphism counts for {dataset} {split}:')
             pprint(isomorphism_dict[dataset][split])
 
             
