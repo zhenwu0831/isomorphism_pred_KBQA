@@ -351,7 +351,7 @@ def main():
             metrics    = eval_epoch_graph (model, dev_loader,   device)
         else:
             train_loss = train_epoch_text(model, train_loader, optimizer, device, tasks, weights)
-            metrics    = eval_epoch_text (model, dev_loader,   device, tasks)
+            metrics    = eval_epoch_text (model, dev_loader,   device, tasks, tokenizer)
 
         # log all metrics
         log_dict = {"epoch": ep, "train_loss": train_loss}
@@ -391,7 +391,7 @@ def main():
     elif args.model_type == "graph":
         test_metrics = eval_epoch_graph(model, test_loader, device)
     else:
-        test_metrics = eval_epoch_text(model, test_loader, device, tasks)
+        test_metrics = eval_epoch_text(model, test_loader, device, tasks, tokenizer)
 
     predictions = []
     model.eval()
