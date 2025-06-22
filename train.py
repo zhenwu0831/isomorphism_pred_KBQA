@@ -21,9 +21,10 @@ from utils.utils import (
     seed_everything,
     pad_entity_labels,
     kco_info_nce_loss,
+    execute_sparql
 )
 from utils.evaluation import hits_at_k_text, hits_at_k_graph, compute_hits_at_k
-from utils.webqsp_sql import lisp_to_sparql, execute_sparql
+from utils.webqsp_sql import lisp_to_sparql
 from utils.early_stopping import EarlyStopping
 from dataloader import get_dataloader
 

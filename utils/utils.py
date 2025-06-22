@@ -87,3 +87,15 @@ def kco_info_nce_loss(A: torch.Tensor, B: torch.Tensor, temp=0.1, allow_gradient
     logits = torch.cat([positives, negatives], dim=1) / temp
     labels = torch.zeros(S.size(0), dtype=torch.long, device=S.device)
     return nn.CrossEntropyLoss()(logits, labels)
+
+def execute_sparql(sparql):
+    """
+    Executes the SPARQL query and returns the answers.
+    """
+    try:
+        qres = g.query(sparql)
+        answers = [str(a[0]) for a in qres]
+        return answers
+    except Exception as e:
+        print(e)
+        return []
