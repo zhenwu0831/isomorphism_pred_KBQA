@@ -363,11 +363,17 @@ def main():
         metric_str = "  ".join(f"dev_{n}={s:.4f}" for n, s in metrics.items())
         print(f"Epoch {ep}: train_loss={train_loss:.4f}  {metric_str}")
 
-        # pick primary metric: prefer hits@k if ranking is one of the tasks
-        if "ranking" in tasks:
+        if args.model_type == "graph":
             primary = "hits@k"
-        else:
+        elif args.model_type == "cod":
             primary = "iso_f1"
+        else:  # text model
+            if "ranking" in tasks:
+                primary = "hits@k_ranking"
+            elif "generation" in tasks:
+                primary = "hits@k_generation"
+            else:
+                primary = "iso_f1"
         primary_val = metrics.get(primary, 0.0)
 
         # checkpoint if improved

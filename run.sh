@@ -19,7 +19,8 @@ OUTPUT_DIR=""                       # if blank, auto‐named below
 PTLM_MODEL="t5-base"
 BATCH_SIZE=16
 EPOCHS=50
-LR=8e-5
+LR=1e-4
+PATIENCE=5
 
 INPUT_MAX_LENGTH=512
 GENERATION_MAX_LENGTH=128
@@ -78,7 +79,7 @@ done
 if [[ -z "$OUTPUT_DIR" ]]; then
   TS=$(date +%Y%m%d_%H%M%S)
   CLEAN_TASKS="${TASKS//,/‐}"
-  OUTPUT_DIR="output/${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_${TS}"
+  OUTPUT_DIR="/data/user_data/zhenwu/output/${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_${TS}"
 fi
 mkdir -p "$OUTPUT_DIR"
 
@@ -96,6 +97,7 @@ cat <<EOF
   BATCH_SIZE            = $BATCH_SIZE
   EPOCHS                = $EPOCHS
   LR                    = $LR
+  PATIENCE              = $PATIENCE
 
   INPUT_MAX_LENGTH      = $INPUT_MAX_LENGTH
   GENERATION_MAX_LENGTH = $GENERATION_MAX_LENGTH
@@ -128,6 +130,7 @@ python train.py \
   --batch_size            "$BATCH_SIZE" \
   --epochs                "$EPOCHS" \
   --lr                    "$LR" \
+  --patience              "$PATIENCE" \
   --input_max_length      "$INPUT_MAX_LENGTH" \
   --generation_max_length "$GENERATION_MAX_LENGTH" \
   --max_seq_len           "$MAX_SEQ_LEN" \
