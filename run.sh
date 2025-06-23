@@ -2,7 +2,7 @@
 #SBATCH --job-name=ISO_KBQA
 #SBATCH --partition=shire-general
 #SBATCH --gres=gpu:A100_80GB:1
-#SBATCH --output=/home/zhenwu/logs/%x_%j.out
+#SBATCH --output=/home/zhenwu/isomorphism_pred_KBQA/logs/%x_%j.out
 #SBATCH --mem=80GB
 #SBATCH --time=2-00:00:00
 
@@ -11,16 +11,24 @@ set -euo pipefail
 # ─── Defaults ──────────────────────────────────────────────────────────────────
 MODEL_TYPE="text"                   # text, graph, or cod
 BACKBONE="t5"                       # bert, t5, gpt2 (ignored for graph)
-TASKS="iso,ranking"      # comma‐sep list (ignored for cod)
+TASKS="ranking"      # comma‐sep list (ignored for cod)
 DATASET="webqsp"                    # e.g. webqsp, cwq, grailqa
-DATA_PATH="/data/user_data/zhenwu/data/webqsp/KBQA_walklet_shuffled_768_dim_data.dill"         # full path to your data file
+# DATA_PATH="/data/user_data/zhenwu/data/webqsp/KBQA_walklet_shuffled_768_dim_data.dill"
+DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/KBQA_walklet_edge_label_1024_dim_data.dill"
 OUTPUT_DIR=""                       # if blank, auto‐named below
 
 PTLM_MODEL="t5-base"
 BATCH_SIZE=16
-EPOCHS=50
-LR=1e-4
-PATIENCE=5
+EPOCHS=80
+LR=8e-5
+PATIENCE=8
+
+SCHEDULER=none
+STEP_SIZE=3
+GAMMA=0.9
+WARMUP_STEPS=0
+T_MAX=${EPOCHS}  # for cosine scheduler
+ETA_MIN=1e-5
 
 INPUT_MAX_LENGTH=512
 GENERATION_MAX_LENGTH=128
@@ -33,8 +41,11 @@ NODE_EMB_DIM=768
 SHARED_DIM=2048         # for CoD
 DROPOUT=0.2
 
-WEIGHTS="1,1"              # e.g. "0.7,0.2,0.1"
-RELATIONS_PATH="/data/user_data/zhenwu/data/webqsp/relations_dict_shuffled.json"       # e.g. data/relations.json
+SEED=15213
+
+WEIGHTS="1"              # e.g. "0.7,0.2,0.1"
+# RELATIONS_PATH="/data/user_data/zhenwu/data/webqsp/relations_dict_shuffled.json"  
+RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/relations_dict.json"
 
 WANDB_PROJECT="isomorphism_pred_KBQA"
 WANDB_RUN="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${TASKS//,/‐}"
@@ -53,6 +64,15 @@ while [[ $# -gt 0 ]]; do
     --batch_size)           BATCH_SIZE="$2"; shift 2;;
     --epochs)               EPOCHS="$2"; shift 2;;
     --lr)                   LR="$2"; shift 2;;
+
+    --patience)             PATIENCE="$2"; shift 2;;
+    --scheduler)            SCHEDULER="$2"; shift 2;;
+    --step_size)            STEP_SIZE="$2"; shift 2;;
+    --gamma)                GAMMA="$2"; shift 2;;
+    --warmup_steps)         WARMUP_STEPS="$2"; shift 2;;
+    --t_max)                T_MAX="$2"; shift 2;;
+    --eta_min)              ETA_MIN="$2"; shift 2;;
+    --seed)                 SEED="$2"; shift 2;;
 
     --input_max_length)     INPUT_MAX_LENGTH="$2"; shift 2;;
     --generation_max_length)GENERATION_MAX_LENGTH="$2"; shift 2;;
@@ -79,7 +99,7 @@ done
 if [[ -z "$OUTPUT_DIR" ]]; then
   TS=$(date +%Y%m%d_%H%M%S)
   CLEAN_TASKS="${TASKS//,/‐}"
-  OUTPUT_DIR="/data/user_data/zhenwu/output/${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_${TS}"
+  OUTPUT_DIR="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/ckpts/${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_${TS}"
 fi
 mkdir -p "$OUTPUT_DIR"
 
@@ -98,6 +118,14 @@ cat <<EOF
   EPOCHS                = $EPOCHS
   LR                    = $LR
   PATIENCE              = $PATIENCE
+
+  SCHEDULER             = $SCHEDULER
+  STEP_SIZE             = $STEP_SIZE
+  GAMMA                 = $GAMMA
+  WARMUP_STEPS          = $WARMUP_STEPS
+  T_MAX                 = $T_MAX
+  ETA_MIN               = $ETA_MIN
+  SEED                  = $SEED
 
   INPUT_MAX_LENGTH      = $INPUT_MAX_LENGTH
   GENERATION_MAX_LENGTH = $GENERATION_MAX_LENGTH
@@ -131,6 +159,13 @@ python train.py \
   --epochs                "$EPOCHS" \
   --lr                    "$LR" \
   --patience              "$PATIENCE" \
+  --scheduler             "$SCHEDULER" \
+  --step_size             "$STEP_SIZE" \
+  --gamma                 "$GAMMA" \
+  --warmup_steps          "$WARMUP_STEPS" \
+  --t_max                 "$T_MAX" \
+  --eta_min               "$ETA_MIN" \
+  --seed                  "$SEED" \
   --input_max_length      "$INPUT_MAX_LENGTH" \
   --generation_max_length "$GENERATION_MAX_LENGTH" \
   --max_seq_len           "$MAX_SEQ_LEN" \
