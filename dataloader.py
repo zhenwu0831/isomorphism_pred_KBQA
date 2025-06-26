@@ -58,7 +58,8 @@ class UnifiedDataset(Dataset):
         """
         out = []
         for e in data:
-            if not e.get("question") or not e.get("kg_tuples") or not e.get("entities"):
+            # import pdb; pdb.set_trace()
+            if not e.get("question") or not e.get("kg_tuples"):
                 continue
             if "generation" in self.modes and not e.get("s_expression"):
                 continue
@@ -66,7 +67,12 @@ class UnifiedDataset(Dataset):
                 continue
 
             q = e["question"].strip()
-            ents = " ".join(f"{subj}: {obj}" for subj, obj in e["entities"])
+            if e.get("entities"):
+                ents = " ".join(f"{subj}: {obj}" for subj, obj in e["entities"])
+            elif e.get("head_entities"):
+                ents = " | ".join(f"{subj}: {obj}: {name}" for subj, obj, name in e["head_entities"])
+            else:
+                print(f"Warning: No entities in {e.get('ID', e.get('id'))}, skipping.")
             kg = " | ".join(" ".join(t) for t in e["kg_tuples"])
             e["text_in"] = q
             e["struct_in"] = f"{ents} | {kg}"
@@ -81,6 +87,7 @@ class UnifiedDataset(Dataset):
     def _tokenize_all(self) -> List[Dict]:
         toks = []
         for e in tqdm(self.samples, desc="Tokenizing unified dataset"):
+            # import pdb; pdb.set_trace()
             node_dict = e["node_data"]["node_dict"]
             struct = e["struct_in"]
             if self.convert_entities:
@@ -119,7 +126,7 @@ class UnifiedDataset(Dataset):
                 idx = self.label_map[e["isomorphism"]]
                 tv["iso_label"] = torch.tensor(idx, dtype=torch.long)
 
-            if "ranking" in self.modes:
+            if "ranking" in self.modes or "generation" in self.modes:
                 ans = [a[0][3:] if a[0].startswith("ns:") else a[0] for a in e["answers"]]
                 if self.convert_entities:
                     ans = [self._map_entities(a, node_dict) for a in ans]
@@ -131,6 +138,12 @@ class UnifiedDataset(Dataset):
                 tv["entity_spans"] = {k: spans[k] for k in sorted_keys}
                 tv["entity_labels"] = {k: labels[k] for k in sorted_keys}
                 tv["answers"] = ans
+
+            if self.convert_entities:
+                # node_dict: real_ent -> idx
+                inv_map = {idx: ent for ent, idx in node_dict.items()}
+                # build list  [ ent_for_<E0>, ent_for_<E1>, … ]
+                tv["entity_ids"] = [inv_map[i] for i in range(len(inv_map))]
 
             # graph view
             q2 = self.tokenizer(
@@ -197,6 +210,9 @@ def collate_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
         batch["text_view"]["entity_spans"] = [t["entity_spans"] for t in tvs]
         batch["text_view"]["entity_labels"] = [t["entity_labels"] for t in tvs]
         batch["text_view"]["answers"] = [t["answers"] for t in tvs]
+
+    if "entity_ids" in tvs[0]:
+        batch["text_view"]["entity_ids"]   = [t["entity_ids"] for t in tvs]
 
     gvs = [s["graph_view"] for s in samples]
     batch["graph_view"]["input_ids"] = pad_sequence(

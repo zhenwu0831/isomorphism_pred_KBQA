@@ -6,6 +6,7 @@ import argparse
 import dill
 import random
 import numpy as np
+import re
 from collections import Counter
 
 import torch
@@ -19,6 +20,7 @@ from transformers import (
 )
 import wandb
 from tqdm import tqdm
+from sklearn.metrics import f1_score
 
 from utils.utils import (
     compute_global_label_map,
@@ -27,8 +29,8 @@ from utils.utils import (
     kco_info_nce_loss,
     execute_sparql
 )
-from utils.evaluation import hits_at_k_text, hits_at_k_graph, compute_hits_at_k
-from utils.webqsp_sql import lisp_to_sparql
+from utils.evaluation import hits_at_k_text, hits_at_k_graph, compute_hits_at_k, compute_exact_match, compute_f1
+from utils.parse_sql import lisp_to_sparql
 from utils.early_stopping import EarlyStopping
 from dataloader import get_dataloader
 
@@ -65,7 +67,7 @@ def train_epoch_text(
         if "ranking" in tasks:
             kwargs["entity_spans"] = spans
 
-        out = model(**kwargs)
+        out, _ = model(**kwargs)
         loss = torch.tensor(0.0, device=device)
 
         gen_loss, iso_loss, ranking_loss = None, None, None
@@ -84,7 +86,6 @@ def train_epoch_text(
         loss.backward()
         optimizer.step()
 
-        # step scheduler per batch only for linear & onecycle
         if args.scheduler is not None and args.scheduler in ("linear", "onecycle"):
             scheduler.step()
 
@@ -107,15 +108,17 @@ def train_epoch_text(
     return total_loss / len(loader), global_step
 
 
-def eval_epoch_text(model, loader, device, tasks, tokenizer, eps=1e-5):
+def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
     model.eval()
     iso_preds, iso_labels = [], []
     rank_hits, rank_count = 0.0, 0
-    gen_hits, gen_count = 0.0, 0
+    gen_hits, gen_count   = 0.0, 0
+    em_sum,  f1_sum    = 0, 0
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating", leave=False):
             tv = batch["text_view"]
+            gv_node_dicts = batch["graph_view"]["node_dict"] 
             in_ids = tv["input_ids"].to(device)
             attn   = tv["attention_mask"].to(device)
             iso_l  = tv.get("iso_label")
@@ -123,56 +126,83 @@ def eval_epoch_text(model, loader, device, tasks, tokenizer, eps=1e-5):
             gold_spans = tv.get("answers")
             gold_sexps = tv.get("gold_sexp")
 
-            kwargs = {"input_ids": in_ids, "attention_mask": attn}
             if "generation" in tasks:
-                gen_inputs = kwargs.copy()
-            if "ranking" in tasks:
-                kwargs["entity_spans"] = spans
+                gen_inputs = {"input_ids": in_ids, "attention_mask": attn}
 
-            out = model(**kwargs)
+            forward_out = None
+            if any(t in tasks for t in ("iso","ranking")):
+                fw_kwargs = {"input_ids": in_ids, "attention_mask": attn}
+                if "ranking" in tasks:
+                    fw_kwargs["entity_spans"] = spans
+                forward_out, _ = model(**fw_kwargs)
 
-            # ISO
             if "iso" in tasks:
-                preds = out["iso_logits"].argmax(-1).cpu().tolist()
+                iso_logits = forward_out["iso_logits"]
+                preds = iso_logits.argmax(-1).cpu().tolist()
                 iso_preds.extend(preds)
                 iso_labels.extend(iso_l.tolist())
 
-            # RANKING
             if "ranking" in tasks:
-                scores = out["entity_scores"].cpu()
-                labs, mask = pad_entity_labels(tv["entity_labels"], device)
+                scores = forward_out["entity_scores"].cpu()
+                labs, _ = pad_entity_labels(tv["entity_labels"], device)
                 labs = labs.cpu()
                 batch_hits = compute_hits_at_k(scores, labs)
                 rank_hits += batch_hits
                 rank_count += (labs.sum(dim=1) > 0).sum().item()
 
-            # GENERATION → SPARQL → HITS@K
             if "generation" in tasks:
-                beams = getattr(model.config, "num_beams", 1)
+                beams = args.num_beams
                 gens = model.generate(
                     **gen_inputs,
-                    max_length=model.config.max_length,
+                    max_length=args.generation_max_length,
                     num_beams=beams
                 )
                 decoded = tokenizer.batch_decode(gens, skip_special_tokens=True)
-                bs = in_ids.size(0)
-                for i in range(bs):
-                    preds_sexps = decoded[i*beams:(i+1)*beams]
-                    gold_ents = [a[0] for a in gold_spans[i]]
-                    counter = Counter()
-                    for sexp in preds_sexps:
+                batch_size = in_ids.size(0)
+
+                for i in range(batch_size):
+                    sample_sexps = decoded[i*beams:(i+1)*beams]
+                    gold_entities = [a for a in gold_spans[i]]
+                    count_by_ent = Counter()
+
+                    # import pdb; pdb.set_trace()
+
+                    # remap each <E#> back to original id before SPARQL
+                    node_map = gv_node_dicts[i]  # e.g. {0: 'm.0hqs1x_', 1: 'm.0z3xfvs', …}
+                    for sexp in sample_sexps:
+                        # replace placeholders
+                        for idx, orig_ent in node_map.items():
+                            sexp = sexp.replace(f"<E{idx}>", orig_ent)
                         try:
                             sparql = lisp_to_sparql(sexp)
                             for ent in execute_sparql(sparql):
-                                counter[ent] += 1
-                        except:
+                                count_by_ent[ent] += 1
+                        except Exception:
                             continue
-                    ranked = [e for e,_ in counter.most_common()]
-                    k = len(gold_ents)
+
+                    # compute Hits@K for generation
+                    ranked = [e for e,_ in count_by_ent.most_common()]
+                    k = len(gold_entities)
                     if k:
-                        gen_hits += sum(e in gold_ents for e in ranked[:k]) / (k + eps)
+                        hit = sum(1 for e in ranked[:k] if e in gold_entities) / (k + eps)
+                        gen_hits += hit
                     gen_count += 1
 
+                    # compute em
+                    best_pred = sample_sexps[0]
+                    for idx, orig in node_map.items():
+                        best_pred = best_pred.replace(f"<E{idx}>", orig)
+                    try:
+                        em = compute_exact_match(best_pred, gold_sexps[i])
+                    except Exception:
+                        em = 0
+                    em_sum += em
+
+                    # compute f1
+                    if k:
+                        f1_sum += compute_f1(ranked[:k], gold_entities)
+
+    # aggregate
     metrics = {}
     if "iso" in tasks:
         from sklearn.metrics import f1_score
@@ -181,22 +211,39 @@ def eval_epoch_text(model, loader, device, tasks, tokenizer, eps=1e-5):
         metrics["hits@k_ranking"] = rank_hits / max(rank_count, 1)
     if "generation" in tasks:
         metrics["hits@k_generation"] = gen_hits / max(gen_count, 1)
+        metrics["exact_match"] = em_sum    / max(gen_count, 1)
+        metrics["f1_score"] = f1_sum / max(gen_count, 1)
+
     return metrics
 
-
-def train_epoch_graph(model, loader, optimizer, device):
+def train_epoch_graph(model, loader, optimizer, weights, device):
     model.train()
     total_loss = 0.0
-    loss_fn = nn.BCELoss()
+    rank_loss_fn = torch.nn.BCELoss()
+    iso_loss_fn  = torch.nn.CrossEntropyLoss()
 
     for batch in tqdm(loader, desc="Training", leave=False):
         optimizer.zero_grad()
         gv = batch["graph_view"]
-        out = model(gv)
-        scores = out["entity_scores"]
-        gdata = gv["gnn_data"].to(device)
-        labels= gdata.answer_x.squeeze(-1).float()
-        loss = loss_fn(scores, labels)
+        out, _ = model(gv)
+
+        loss = torch.tensor(0.0, device=device)
+
+        # entity ranking loss (node‐level BCE)
+        if "ranking" in model.modes:
+            scores = out["entity_scores"]
+            gdata  = gv["gnn_data"].to(device)
+            labels = gdata.answer_x.squeeze(-1).float()
+            l_rank = rank_loss_fn(scores, labels)
+            loss  += weights.get("ranking", 1.0) * l_rank
+
+        # isomorphism classification loss (graph‐level CE)
+        if "iso" in model.modes:
+            iso_lbl = batch["text_view"]["iso_label"].to(device)
+            logits  = out["iso_logits"]
+            l_iso   = iso_loss_fn(logits, iso_lbl)
+            loss   += weights.get("iso", 1.0) * l_iso
+
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -206,20 +253,48 @@ def train_epoch_graph(model, loader, optimizer, device):
 
 def eval_epoch_graph(model, loader, device):
     model.eval()
-    total_hits, count = 0.0, 0
+    rank_hits, rank_count = 0.0, 0
+    iso_preds, iso_labels = [], []
 
     with torch.no_grad():
-        for batch in tqdm(loader, desc="Evaluating", leave=False):
+        for batch in tqdm(loader, desc="Evaluating (graph)", leave=False):
             gv = batch["graph_view"]
-            out = model(gv)
-            scores = out["entity_scores"].cpu()
-            gdata = gv["gnn_data"]
-            hits, _, _ = hits_at_k_graph(scores, gdata.answer_x.cpu())
-            total_hits += hits
-            count += 1
+            out, _ = model(gv)
 
-    return {"hits@k": total_hits / max(count, 1)}
+            # ranking hits@k over each graph
+            if "ranking" in model.modes:
+                scores_flat = out["entity_scores"].cpu()
+                gdata       = gv["gnn_data"]
+                batch_idx   = gdata.batch.cpu()
+                gold_mask   = gdata.answer_x.cpu().squeeze(-1)
 
+                for gid in range(int(batch_idx.max()) + 1):
+                    node_mask = (batch_idx == gid)
+                    sc = scores_flat[node_mask]
+                    gm = gold_mask[node_mask]
+
+                    ranked   = torch.argsort(sc, descending=True).tolist()
+                    gold_idx = torch.where(gm == 1)[0].tolist()
+                    k = len(gold_idx)
+                    if k > 0:
+                        rank_hits  += len(set(ranked[:k]) & set(gold_idx)) / k
+                        rank_count += 1
+
+            # iso classification F1
+            if "iso" in model.modes:
+                logits = out["iso_logits"]
+                preds  = logits.argmax(-1).cpu().tolist()
+                gold   = batch["text_view"]["iso_label"].tolist()
+                iso_preds.extend(preds)
+                iso_labels.extend(gold)
+
+    # aggregate
+    metrics = {}
+    if "ranking" in model.modes:
+        metrics["hits@k_graph"] = rank_hits / max(rank_count, 1)
+    if "iso" in model.modes:
+        metrics["iso_f1_graph"] = f1_score(iso_labels, iso_preds, average="macro")
+    return metrics
 
 def train_epoch_cod(model, loader, optimizer, device):
     model.train()
@@ -229,7 +304,7 @@ def train_epoch_cod(model, loader, optimizer, device):
         iso_l = batch["text_view"]["iso_label"].to(device)
         logits, z_gcn, z_text = model(batch)
         cl = F.cross_entropy(logits, iso_l)
-        nc = kco_info_nce_loss(z_gcn, z_text)
+        nc = (kco_info_nce_loss(z_gcn, z_text) + kco_info_nce_loss(z_text, z_gcn)) / 2.0
         loss = cl + nc
         loss.backward()
         optimizer.step()
@@ -265,6 +340,7 @@ def main():
     parser.add_argument("--input_max_length",      type=int, default=512)
     parser.add_argument("--generation_max_length", type=int, default=128)
     parser.add_argument("--max_seq_len",           type=int, default=512)
+    parser.add_argument("--num_beams", type=int, default=1,)
 
     parser.add_argument("--ptlm_model",  default="t5-base")
     parser.add_argument("--batch_size",  type=int, default=16)
@@ -290,6 +366,7 @@ def main():
     parser.add_argument("--gnn_model",    choices=["rgcn","rgat","gcn"], default="rgcn")
     parser.add_argument("--gnn_depth",    type=int, default=2)
     parser.add_argument("--node_emb_dim", type=int, default=768)
+    parser.add_argument("--hidden_dim",  type=int, default=768)
 
     parser.add_argument("--shared_dim",   type=int, default=2048)
     parser.add_argument("--dropout",      type=float, default=0.2)
@@ -316,7 +393,16 @@ def main():
     # --- data ---
     with open(args.data_path, "rb") as f:
         data = dill.load(f)
-    train, dev, test = data["train"], data["dev"], data["test"]
+
+    if args.dataset != "grailqa":
+        train, dev, test = data["train"], data["dev"], data["test"]
+    else:
+        train = data["train"][:int(len(data["train"])*0.7)]
+        dev = data["train"][int(len(data["train"])*0.7):]
+        test = data["dev"]
+
+    all_samples = train + dev + test
+    max_entities = max(len(e["node_data"]["node_dict"]) for e in all_samples)
 
     # --- labels & relations ---
     label_map = None
@@ -334,6 +420,14 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(args.ptlm_model)
     if args.backbone == "gpt2" and tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
+
+    entity_tokens = [f"<E{i}>" for i in range(max_entities)]
+    special_tokens = {
+            'less': ' <',
+            'less_or_equal': ' <='
+        }
+
+    tokenizer.add_tokens(entity_tokens + list(special_tokens.values()))
 
     train_loader = get_dataloader(
         train, args, tokenizer, modes=tasks, convert_entities=True,
@@ -359,6 +453,7 @@ def main():
             model = T5MultiTaskModel(args, tokenizer, modes=tasks)
         else:
             model = GPT2MultiTaskModel(args, tokenizer, modes=tasks)
+        model.backbone.resize_token_embeddings(len(tokenizer))
 
     elif args.model_type == "graph":
         model = GraphMultiTaskModel(args, modes=tasks)
@@ -370,7 +465,8 @@ def main():
             txt = T5MultiTaskModel(args, tokenizer, modes=["iso"])
         else:
             txt = GPT2MultiTaskModel(args, tokenizer, modes=["iso"])
-        graph = GraphMultiTaskModel(args, modes=["ranking"])
+        txt.backbone.resize_token_embeddings(len(tokenizer))
+        graph = GraphMultiTaskModel(args, modes=["iso"])
         model = CoDModel(args, txt, graph)
 
     model.to(device)
@@ -433,7 +529,7 @@ def main():
             train_loss = train_epoch_cod(model, train_loader, optimizer, device)
             metrics = eval_epoch_cod(model, dev_loader, device)
         elif args.model_type == "graph":
-            train_loss = train_epoch_graph(model, train_loader, optimizer, device)
+            train_loss = train_epoch_graph(model, train_loader, optimizer, weights, device)
             metrics = eval_epoch_graph(model, dev_loader, device)
         else:
             train_loss, global_step = train_epoch_text(
@@ -441,12 +537,12 @@ def main():
                 optimizer, scheduler, global_step,
                 device, tasks, weights
             )
-            metrics = eval_epoch_text(model, dev_loader, device, tasks, tokenizer)
+            metrics = eval_epoch_text(args, model, dev_loader, device, tasks, tokenizer)
 
-        primary = ("hits@k" if args.model_type=="graph"
+        primary = ("hits@k_graph" if args.model_type=="graph"
                     else "iso_f1" if args.model_type=="cod"
                     else "hits@k_ranking" if "ranking" in tasks
-                    else "hits@k_generation" if "generation" in tasks
+                    else "f1_score" if "generation" in tasks
                     else "iso_f1")
 
         # epoch‐wise scheduler stepping
@@ -485,7 +581,7 @@ def main():
     elif args.model_type == "graph":
         test_metrics = eval_epoch_graph(model, test_loader, device)
     else:
-        test_metrics = eval_epoch_text(model, test_loader, device, tasks, tokenizer)
+        test_metrics = eval_epoch_text(args, model, test_loader, device, tasks, tokenizer)
 
     predictions = []
     model.eval()
@@ -503,7 +599,15 @@ def main():
             if "ranking" in tasks:
                 kwargs["entity_spans"] = spans
 
-            out = model(**kwargs)
+            if args.model_type == "graph":
+                out = model(batch["graph_view"])
+            else:
+                kwargs = {"input_ids": in_ids, "attention_mask": attn}
+                if "generation" in tasks:
+                    gen_inputs = kwargs.copy()
+                if "ranking" in tasks:
+                    kwargs["entity_spans"] = spans
+                    out = model(**kwargs)
 
             # ISO
             iso_p = (out["iso_logits"].argmax(-1).cpu().tolist()
@@ -520,10 +624,10 @@ def main():
             # GENERATION
             gen_p = None
             if "generation" in tasks:
-                beams = getattr(model.config, "num_beams", 1)
+                beams = args.num_beams
                 gens = model.generate(
                     **gen_inputs,
-                    max_length=model.config.max_length,
+                    max_length=args.generation_max_length,
                     num_beams=beams
                 )
                 dec = tokenizer.batch_decode(gens, skip_special_tokens=True)

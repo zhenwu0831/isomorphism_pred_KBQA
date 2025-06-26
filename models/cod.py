@@ -9,10 +9,13 @@ class CoDModel(nn.Module):
         self.params = params
         self.text_model = text_model
         self.graph_model = graph_model
+
+        text_dim = self.text_model.hidden
+
         self.layer_norm = nn.LayerNorm(self.params.hidden_dim)
         self.dropout = nn.Dropout(self.params.dropout)
         self.shared_dim = self.params.shared_dim
-        self.classifier = nn.Linear(self.shared_dim * 2, self.params.num_classes)
+        self.classifier = nn.Linear(text_dim + self.params.hidden_dim, self.params.num_classes)
         
         self.gcn_head = nn.Sequential(
             nn.Linear(self.params.hidden_dim, self.shared_dim, bias=False),
@@ -21,7 +24,7 @@ class CoDModel(nn.Module):
         ).cuda()
         
         self.text_head = nn.Sequential(
-            nn.Linear(self.params.hidden_dim, self.shared_dim, bias=False),
+            nn.Linear(text_dim, self.shared_dim, bias=False),
             nn.Linear(self.shared_dim, self.shared_dim, bias=False),
             nn.ReLU()
         ).cuda()

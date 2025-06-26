@@ -1,9 +1,35 @@
 # utils/evaluation.py
+import os,sys 
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import torch
 from typing import List, Any
+from compute_isomorphisms.code.create_sem_matcher import *
 
 eps = 1e-5
+
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+ONTOLOGY_DIR = os.path.join(BASE_DIR, "ontology")
+
+FB_ROLES_FILE      = os.path.join(ONTOLOGY_DIR, "fb_roles")
+FB_TYPES_FILE      = os.path.join(ONTOLOGY_DIR, "fb_types")
+REVERSE_PROPS_FILE = os.path.join(ONTOLOGY_DIR, "reverse_properties")
+
+# load once
+reverse_properties, relation_dr, relations, upper_types, types, common_rels = process_ontology(
+    fb_roles_file=FB_ROLES_FILE,
+    fb_types_file=FB_TYPES_FILE,
+    reverse_properties_file=REVERSE_PROPS_FILE
+)
+
+matcher = SemanticMatcher(
+    reverse_properties,
+    relation_dr,
+    relations,
+    upper_types,
+    types
+)
 
 def hits_at_k_graph(
     node_scores: torch.Tensor,
@@ -98,3 +124,29 @@ def compute_hits_at_k(all_predictions, all_gold_labels):
         hits_at_k_scores += hit_score
 
     return hits_at_k_scores
+
+def compute_exact_match(pred, ref):
+    em = int(matcher.same_logical_form(pred, ref))
+    return em
+
+def compute_f1(pred_list, gold_list):
+    """
+    Compute precision, recall, and F1-score for a single prediction-gold pair.
+    Args:
+        pred: A prediction string (e.g., "A|B|C").
+        gold: A gold label string (e.g., "B|C|D").
+    Returns:
+        A dictionary with precision, recall, and F1-score.
+    """
+    # pred_list = [p.strip() for p in pred.split("|")]
+    # gold_list = [g.strip() for g in gold.split("|")]
+
+    pred_set = set(pred_list)
+    gold_set = set(gold_list)
+
+    true_positives = len(pred_set & gold_set)  # Intersection of prediction and gold
+    precision = true_positives / len(pred_set) if len(pred_set) > 0 else 0
+    recall = true_positives / len(gold_set) if len(gold_set) > 0 else 0
+    f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+    return f1

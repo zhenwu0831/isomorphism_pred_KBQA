@@ -2,9 +2,9 @@
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import FastRGCNConv, RGATConv, GCNConv
+from torch_geometric.nn import FastRGCNConv, RGATConv, GCNConv, global_max_pool, global_mean_pool
 from torch_geometric.data import Batch
-from transformers import AutoModel
+from transformers import AutoModel, T5EncoderModel
 
 
 class GNNDropout(nn.Module):
@@ -53,7 +53,10 @@ class DeepNet(nn.Module):
         super().__init__()
         layers = []
         # first layer: input_dim = text_emb_dim + node_emb_dim + 1
-        in0 = params.text_emb_dim + params.node_emb_dim + 1
+        if "iso" in params.modes:
+            in0 = params.text_emb_dim + params.node_emb_dim
+        else:
+            in0 = params.text_emb_dim + params.node_emb_dim + 1
         hid = params.hidden_dim
         # add first conv block
         layers.append(GNNConv(params.gnn_model, in0, hid, params.num_rels))
@@ -92,9 +95,15 @@ class GraphMultiTaskModel(nn.Module):
         assert set(modes).issubset({"ranking", "iso"}), "Unsupported mode"
         self.modes = set(modes)
         self.params = params
+        self.params.modes = modes
 
         # -- question encoder --
-        self.text_encoder = AutoModel.from_pretrained(params.ptlm_model)
+        model_name = params.ptlm_model
+        if "t5" in model_name:
+            self.text_encoder = T5EncoderModel.from_pretrained(model_name)
+        else:
+            self.text_encoder = AutoModel.from_pretrained(model_name)
+
         text_hid = self.text_encoder.config.hidden_size
         # propagate text_emb_dim for GNN input size
         self.params.text_emb_dim = text_hid
@@ -103,15 +112,17 @@ class GraphMultiTaskModel(nn.Module):
         self.gnn = DeepNet(params)
         self.layer_norm = nn.LayerNorm(params.hidden_dim)
 
+        self.pooling = global_max_pool
+
         # -- isomorphism classification head --
         if "iso" in self.modes:
             self.iso_dropout = nn.Dropout(params.dropout)
-            self.iso_classifier = nn.Linear(text_hid, params.num_classes)
+            self.iso_classifier = nn.Linear(params.hidden_dim, params.num_classes)
 
         # -- entity ranking head --
         if "ranking" in self.modes:
             # takes [gnn_out || head_entity]
-            self.ans_classifier = nn.Linear(params.hidden_dim + 1, 1)
+            self.ans_classifier = nn.Linear(params.hidden_dim, 1)
             self.ans_sigmoid = nn.Sigmoid()
 
     def forward(self, batch: dict) -> dict:
@@ -133,28 +144,35 @@ class GraphMultiTaskModel(nn.Module):
 
         out = {}
 
-        # -- iso classification --
+        # iso and ranking tasks are similar, just that iso is graph classification and ranking is node classification
+        gdata = batch["gnn_data"].to(device)
+        # expand question to each node
+        b_idx = gdata.batch
+        q_exp = q_emb[b_idx]                   # (N, H)
+        node_feats = gdata.x                   # (N, node_emb_dim)
+        head_flag  = gdata.head_x.unsqueeze(-1).float()  # (N,1)
+
+        # concat features
         if "iso" in self.modes:
-            h = self.iso_dropout(q_emb)
-            out["iso_logits"] = self.iso_classifier(h)
-
-        # -- entity ranking --
-        if "ranking" in self.modes:
-            gdata = batch["gnn_data"].to(device)
-            # expand question to each node
-            b_idx = gdata.batch
-            q_exp = q_emb[b_idx]                   # (N, H)
-            node_feats = gdata.x                   # (N, node_emb_dim)
-            head_flag  = gdata.head_x.unsqueeze(-1).float()  # (N,1)
-
-            # concat features
+            g_in = torch.cat([q_exp, node_feats], dim=-1)  # (N, H+feat)
+        elif "ranking" in self.modes:
             g_in = torch.cat([q_exp, node_feats, head_flag], dim=-1)  # (N, H+feat+1)
-            g_out = self.gnn((g_in, gdata.edge_index, gdata.edge_type))
-            g_norm = self.layer_norm(g_out)         # (N, hidden_dim)
 
-            # score nodes
-            cls_in = torch.cat([g_norm, head_flag], dim=-1)
-            raw = self.ans_classifier(cls_in).squeeze(-1)
-            out["entity_scores"] = self.ans_sigmoid(raw)
+        g_out = self.gnn((g_in, gdata.edge_index, gdata.edge_type))
+        g_norm = self.layer_norm(g_out)         # (N, hidden_dim)
 
-        return out
+        graph_representation = self.pooling(g_norm, gdata.batch)  # (B, hidden_dim)
+        # -- isomorphism classification --
+        if "iso" in self.modes:
+            logits = self.iso_classifier(self.iso_dropout(graph_representation))
+            out["iso_logits"] = logits  # (B, num_classes)
+
+        # score nodes
+        if "ranking" in self.modes:
+            node_scores = self.ans_classifier(g_norm)
+            node_scores = self.ans_sigmoid(node_scores).squeeze(-1)  #
+            # mask out head nodes
+            node_scores = node_scores * (1 - head_flag.squeeze(-1))
+            out["entity_scores"] = node_scores  # (N,)
+
+        return out, graph_representation

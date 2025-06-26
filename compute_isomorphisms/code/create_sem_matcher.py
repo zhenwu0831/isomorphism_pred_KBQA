@@ -2,8 +2,8 @@ import json
 import argparse
 import networkx as nx
 
-from collections import defaultdict
-from typing import List, OrderedDict, Set, Dict
+from collections import defaultdict, OrderedDict
+from typing import List, Set, Dict
 
 
 function_map = {'le': '<=', 'ge': '>=', 'lt': '<', 'gt': '>'}
@@ -238,12 +238,12 @@ class SemanticMatcher:
 
             return G
 
-ontology_dir = '../../ontology'
+# ontology_dir = '../../ontology'
 
-fb_roles = f'{ontology_dir}/fb_roles'
-fb_types = f'{ontology_dir}/fb_types'
-reverse_properties =f'{ontology_dir}/reverse_properties'
+# fb_roles = f'{ontology_dir}/fb_roles'
+# fb_types = f'{ontology_dir}/fb_types'
+# reverse_properties =f'{ontology_dir}/reverse_properties'
 
-reverse_properties, relation_dr, relations, upper_types, types, common_rels = process_ontology(fb_roles_file=fb_roles, fb_types_file=fb_types, reverse_properties_file=reverse_properties)
+# reverse_properties, relation_dr, relations, upper_types, types, common_rels = process_ontology(fb_roles_file=fb_roles, fb_types_file=fb_types, reverse_properties_file=reverse_properties)
 
-matcher = SemanticMatcher(reverse_properties, relation_dr, relations, upper_types, types)
+# matcher = SemanticMatcher(reverse_properties, relation_dr, relations, upper_types, types)
