@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import torch.optim as optim
 from transformers import (
     AutoTokenizer,
     AdamW,
@@ -42,6 +43,11 @@ from models.text_model import (
 from models.graph_model import GraphMultiTaskModel
 from models.cod import CoDModel
 
+# from accelerate import Accelerator
+from torch.cuda.amp import autocast, GradScaler
+# from bitsandbytes.optim import Adam8bit
+
+from torch.utils import checkpoint
 
 def train_epoch_text(
     args, model, loader, optimizer, scheduler,
@@ -118,11 +124,11 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating", leave=False):
             tv = batch["text_view"]
-            gv_node_dicts = batch["graph_view"]["node_dict"] 
+            gv_node_dicts = batch["node_dict"] 
             in_ids = tv["input_ids"].to(device)
             attn   = tv["attention_mask"].to(device)
             iso_l  = tv.get("iso_label")
-            spans  = tv.get("entity_spans")
+            spans  = tv.get("entity_spans", None)
             gold_spans = tv.get("answers")
             gold_sexps = tv.get("gold_sexp")
 
@@ -168,25 +174,25 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
                     # import pdb; pdb.set_trace()
 
                     # remap each <E#> back to original id before SPARQL
-                    node_map = gv_node_dicts[i]  # e.g. {0: 'm.0hqs1x_', 1: 'm.0z3xfvs', …}
+                    node_map = tv["entity_ids"][i]
                     for sexp in sample_sexps:
                         # replace placeholders
                         for idx, orig_ent in node_map.items():
                             sexp = sexp.replace(f"<E{idx}>", orig_ent)
-                        try:
-                            sparql = lisp_to_sparql(sexp)
-                            for ent in execute_sparql(sparql):
-                                count_by_ent[ent] += 1
-                        except Exception:
-                            continue
+                        # try:
+                        #     sparql = lisp_to_sparql(sexp)
+                        #     for ent in execute_sparql(sparql):
+                        #         count_by_ent[ent] += 1
+                        # except Exception:
+                        #     continue
 
                     # compute Hits@K for generation
-                    ranked = [e for e,_ in count_by_ent.most_common()]
-                    k = len(gold_entities)
-                    if k:
-                        hit = sum(1 for e in ranked[:k] if e in gold_entities) / (k + eps)
-                        gen_hits += hit
-                    gen_count += 1
+                    # ranked = [e for e,_ in count_by_ent.most_common()]
+                    # k = len(gold_entities)
+                    # if k:
+                    #     hit = sum(1 for e in ranked[:k] if e in gold_entities) / (k + eps)
+                    #     gen_hits += hit
+                    # gen_count += 1
 
                     # compute em
                     best_pred = sample_sexps[0]
@@ -199,8 +205,8 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
                     em_sum += em
 
                     # compute f1
-                    if k:
-                        f1_sum += compute_f1(ranked[:k], gold_entities)
+                    # if k:
+                    #     f1_sum += compute_f1(ranked[:k], gold_entities)
 
     # aggregate
     metrics = {}
@@ -210,9 +216,9 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
     if "ranking" in tasks:
         metrics["hits@k_ranking"] = rank_hits / max(rank_count, 1)
     if "generation" in tasks:
-        metrics["hits@k_generation"] = gen_hits / max(gen_count, 1)
+        # metrics["hits@k_generation"] = gen_hits / max(gen_count, 1)
         metrics["exact_match"] = em_sum    / max(gen_count, 1)
-        metrics["f1_score"] = f1_sum / max(gen_count, 1)
+        # metrics["f1_score"] = f1_sum / max(gen_count, 1)
 
     return metrics
 
@@ -225,7 +231,14 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
     for batch in tqdm(loader, desc="Training", leave=False):
         optimizer.zero_grad()
         gv = batch["graph_view"]
-        out, _ = model(gv)
+
+        # with autocast():
+        def forward_fn(gv):
+            # Use checkpointing to save memory
+            return model(gv)
+        # out, _ = model(gv)
+
+        out, _ = checkpoint.checkpoint(forward_fn, gv)
 
         loss = torch.tensor(0.0, device=device)
 
@@ -245,7 +258,16 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
             loss   += weights.get("iso", 1.0) * l_iso
 
         loss.backward()
-        optimizer.step()
+        try:
+            optimizer.step()
+        except:
+            import pdb; pdb.set_trace()
+
+
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
+
         total_loss += loss.item()
 
     return total_loss / len(loader)
@@ -374,10 +396,14 @@ def main():
     parser.add_argument("--wandb_proj",  type=str, default="isomorphism_pred_KBQA")
     parser.add_argument("--wandb_run",   type=str, default="run1")
     parser.add_argument("--patience",    type=int, default=5)
+
+    parser.add_argument("--debug", action="store_true", help="Run in debug mode with smaller dataset")
     args = parser.parse_args()
 
     # --- setup ---
     device = seed_everything(args.seed)
+    # accelerator = Accelerator()
+    # device = accelerator.device
     os.makedirs(args.output_dir, exist_ok=True)
     wandb.init(project=args.wandb_proj,
                name=args.wandb_run,
@@ -397,8 +423,12 @@ def main():
     if args.dataset != "grailqa":
         train, dev, test = data["train"], data["dev"], data["test"]
     else:
-        train = data["train"][:int(len(data["train"])*0.7)]
-        dev = data["train"][int(len(data["train"])*0.7):]
+        if args.debug:
+            train = data["train"][:2100]
+            dev = data["train"][2100:3000]
+        else:
+            train = data["train"][:int(len(data["train"])*0.7)]
+            dev = data["train"][int(len(data["train"])*0.7):]
         test = data["dev"]
 
     all_samples = train + dev + test
@@ -454,9 +484,11 @@ def main():
         else:
             model = GPT2MultiTaskModel(args, tokenizer, modes=tasks)
         model.backbone.resize_token_embeddings(len(tokenizer))
+        # model.backbone.gradient_checkpointing_enable()
 
     elif args.model_type == "graph":
         model = GraphMultiTaskModel(args, modes=tasks)
+        # model.text_encoder.gradient_checkpointing_enable()
 
     else:  # CoD
         if args.backbone == "bert":
@@ -470,7 +502,16 @@ def main():
         model = CoDModel(args, txt, graph)
 
     model.to(device)
-    optimizer = AdamW(model.parameters(), lr=args.lr)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+
+    if args.debug:
+        optimizer = AdamW(trainable_params, lr=args.lr)
+    else:
+        optimizer = AdamW(trainable_params, lr=args.lr)
+    # scaler = GradScaler()
+    # model, optimizer, train_loader, dev_loader, test_loader = accelerator.prepare(
+    #     model, optimizer, train_loader, dev_loader, test_loader
+    # )
 
     # --- scheduler setup ---
     total_steps = len(train_loader) * args.epochs
@@ -542,7 +583,7 @@ def main():
         primary = ("hits@k_graph" if args.model_type=="graph"
                     else "iso_f1" if args.model_type=="cod"
                     else "hits@k_ranking" if "ranking" in tasks
-                    else "f1_score" if "generation" in tasks
+                    else "exact_match" if "generation" in tasks
                     else "iso_f1")
 
         # epoch‐wise scheduler stepping
@@ -583,6 +624,10 @@ def main():
     else:
         test_metrics = eval_epoch_text(args, model, test_loader, device, tasks, tokenizer)
 
+    # log final metrics
+    for k,v in test_metrics.items():
+        wandb.log({f"test_{k}": v})
+
     predictions = []
     model.eval()
     with torch.no_grad():
@@ -591,7 +636,7 @@ def main():
             IDs = tv["ID"]
             in_ids = tv["input_ids"].to(device)
             attn   = tv["attention_mask"].to(device)
-            spans  = tv.get("entity_spans")
+            spans  = tv.get("entity_spans", None)
 
             kwargs = {"input_ids": in_ids, "attention_mask": attn}
             if "generation" in tasks:
@@ -600,14 +645,14 @@ def main():
                 kwargs["entity_spans"] = spans
 
             if args.model_type == "graph":
-                out = model(batch["graph_view"])
+                out, _ = model(batch["graph_view"])
             else:
                 kwargs = {"input_ids": in_ids, "attention_mask": attn}
                 if "generation" in tasks:
                     gen_inputs = kwargs.copy()
                 if "ranking" in tasks:
                     kwargs["entity_spans"] = spans
-                    out = model(**kwargs)
+                out, _ = model(**kwargs)
 
             # ISO
             iso_p = (out["iso_logits"].argmax(-1).cpu().tolist()

@@ -104,6 +104,15 @@ class GraphMultiTaskModel(nn.Module):
         else:
             self.text_encoder = AutoModel.from_pretrained(model_name)
 
+        self.text_encoder.gradient_checkpointing_enable()
+        self.text_encoder.config.use_cache = False  # disable cache for training
+
+        # import torch.nn as nn
+        # for m in self.text_encoder.modules():
+        #     if isinstance(m, nn.Dropout):
+        #         m.p = 0.0
+        # self.text_encoder.gradient_checkpointing_disable()
+
         text_hid = self.text_encoder.config.hidden_size
         # propagate text_emb_dim for GNN input size
         self.params.text_emb_dim = text_hid

@@ -32,7 +32,8 @@ class BertMultiTaskModel(nn.Module):
                              attention_mask=attention_mask,
                              return_dict=True)
         seq_hidden = outputs.last_hidden_state  # (B, L, H)
-        pooled = seq_hidden[:, 0]  # CLS token
+        # pooled = seq_hidden[:, 0]  # CLS token
+        pooled = outputs.pooler_output
         results = {}
         if "iso" in self.modes:
             x = self.dropout(pooled)
@@ -42,7 +43,7 @@ class BertMultiTaskModel(nn.Module):
             padded = nn.utils.rnn.pad_sequence(ent_embs, batch_first=True)
             scores = self.entity_scorer(padded).squeeze(-1)
             results['entity_scores'] = self.sigmoid(scores)
-        return results
+        return results, pooled
 
 
 class T5MultiTaskModel(nn.Module):
@@ -143,7 +144,7 @@ class GPT2MultiTaskModel(nn.Module):
         results = {'gen_outputs': gen_outputs}
         if "iso" in self.modes:
             results['iso_logits'] = self.classifier(self.dropout(pooled))
-        return results
+        return results, pooled
     
     def generate(self, *args, **kwargs):
         return self.backbone.generate(*args, **kwargs)

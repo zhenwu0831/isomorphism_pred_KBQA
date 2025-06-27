@@ -3,41 +3,27 @@
 #SBATCH --partition=shire-general
 #SBATCH --gres=gpu:A100_80GB:1
 #SBATCH --output=/home/zhenwu/isomorphism_pred_KBQA/logs/%x_%j.out
-#SBATCH --mem=80GB
+#SBATCH --mem=200GB
 #SBATCH --time=2-00:00:00
 
 set -euo pipefail
 
+export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+
 # ─── Defaults ──────────────────────────────────────────────────────────────────
-MODEL_TYPE="cod"                   # text, graph, or cod
+MODEL_TYPE="graph"                   # text, graph, or cod
 BACKBONE="t5"                       # bert, t5, gpt2 (ignored for graph)
 TASKS="iso"                  # comma‐sep list (ignored for cod)
-DATASET="webqsp"                   # e.g. webqsp, cwq, grailqa
-
-# commented-out old paths:
-# DATA_PATH="/data/user_data/zhenwu/data/webqsp/KBQA_walklet_shuffled_768_dim_data.dill"
-# DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/KBQA_walklet_edge_label_1024_dim_data.dill"
-# RELATIONS_PATH="/data/user_data/zhenwu/data/webqsp/relations_dict_shuffled.json"
-# RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/relations_dict.json"
+DATASET="grailqa"                   # e.g. webqsp, cwq, grailqa
 
 # ─── pick the correct paths based on DATASET ──────────────────────────────────
-if [[ "$DATASET" == "webqsp" ]]; then
-  DATA_PATH="/data/user_data/zhenwu/data/webqsp/KBQA_walklet_shuffled_768_dim_data.dill"
-  RELATIONS_PATH="/data/user_data/zhenwu/data/webqsp/relations_dict_shuffled.json"
-  NODE_EMB_DIM=768
-elif [[ "$DATASET" == "grailqa" ]]; then
-  DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/KBQA_walklet_edge_label_1024_dim_data.dill"
-  RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/grailqa/relations_dict.json"
-  NODE_EMB_DIM=1024
-else
-  echo "Unknown dataset '$DATASET', please set DATA_PATH and RELATIONS_PATH manually."
-  exit 1
-fi
+DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/${DATASET}/KBQA_walklet_edge_label_768_dim_data.dill"
+RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/${DATASET}/relations_dict.json"
 
 OUTPUT_DIR_BASE="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/ckpts"
 
-PTLM_MODEL="t5-base"
-BATCH_SIZE=8
+PTLM_MODEL="t5-base"  # bert-base-uncased, t5-base, gpt2 (ignored for graph)
+BATCH_SIZE=1
 EPOCHS=50
 LR=5e-5
 PATIENCE=5
@@ -55,7 +41,8 @@ MAX_SEQ_LEN=512
 
 GNN_MODEL="rgcn"
 GNN_DEPTH=2
-HIDDEN_DIM=768
+HIDDEN_DIM=256
+NODE_EMB_DIM=768
 
 SHARED_DIM=2048
 DROPOUT=0.2
@@ -72,14 +59,26 @@ WANDB_PROJECT="isomorphism_pred_KBQA"
 for SEED in "${SEEDS[@]}"; do
   CLEAN_TASKS="${TASKS//,/‐}"
   TS=$(date +%Y%m%d_%H%M%S)
-  OUTPUT_DIR="${OUTPUT_DIR_BASE}/${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_seed${SEED}_${TS}"
+
+  if [[ "$MODEL_TYPE" == "graph" ]]; then
+    # include GNN_MODEL in names
+    NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${CLEAN_TASKS}_seed${SEED}_${TS}"
+    RUN_NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${CLEAN_TASKS}_seed${SEED}"
+  else
+    # include BACKBONE in names
+    NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_seed${SEED}_${TS}"
+    RUN_NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_seed${SEED}"
+  fi
+
+  OUTPUT_DIR="${OUTPUT_DIR_BASE}/${NAME}"
   mkdir -p "$OUTPUT_DIR"
 
-  WANDB_RUN="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_seed${SEED}"
+  WANDB_RUN="$RUN_NAME"
 
   echo "=== Seed $SEED → output: $OUTPUT_DIR, wandb run: $WANDB_RUN ==="
 
   python train.py \
+    --debug \
     --model_type            "$MODEL_TYPE" \
     --backbone              "$BACKBONE" \
     --tasks                 "$TASKS" \

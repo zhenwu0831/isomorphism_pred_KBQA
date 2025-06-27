@@ -126,18 +126,19 @@ class UnifiedDataset(Dataset):
                 idx = self.label_map[e["isomorphism"]]
                 tv["iso_label"] = torch.tensor(idx, dtype=torch.long)
 
-            if "ranking" in self.modes or "generation" in self.modes:
-                ans = [a[0][3:] if a[0].startswith("ns:") else a[0] for a in e["answers"]]
-                if self.convert_entities:
-                    ans = [self._map_entities(a, node_dict) for a in ans]
-                spans = self._extract_entity_spans(
-                    tkn["input_ids"], node_dict
-                )
-                labels = {k: int(k in ans) for k in spans}
-                sorted_keys = sorted(spans, key=lambda k: int(k[2:-1]))
-                tv["entity_spans"] = {k: spans[k] for k in sorted_keys}
-                tv["entity_labels"] = {k: labels[k] for k in sorted_keys}
-                tv["answers"] = ans
+            if self.params.dataset == "webqsp":
+                if "ranking" in self.modes or "generation" in self.modes:
+                    ans = [a[0][3:] if a[0].startswith("ns:") else a[0] for a in e["answers"]]
+                    if self.convert_entities:
+                        ans = [self._map_entities(a, node_dict) for a in ans]
+                    spans = self._extract_entity_spans(
+                        tkn["input_ids"], node_dict
+                    )
+                    labels = {k: int(k in ans) for k in spans}
+                    sorted_keys = sorted(spans, key=lambda k: int(k[2:-1]))
+                    tv["entity_spans"] = {k: spans[k] for k in sorted_keys}
+                    tv["entity_labels"] = {k: labels[k] for k in sorted_keys}
+                    tv["answers"] = ans
 
             if self.convert_entities:
                 # node_dict: real_ent -> idx
@@ -162,10 +163,11 @@ class UnifiedDataset(Dataset):
                     answer_x=torch.tensor(e["node_data"]["answer_x"]),
                     head_x=torch.tensor(e["node_data"]["head_x"])
                 ),
-                "node_dict": {v: k for k, v in node_dict.items()}
+                # "node_dict": {v: k for k, v in node_dict.items()}
+
             }
 
-            toks.append({"text_view": tv, "graph_view": gv})
+            toks.append({"text_view": tv, "graph_view": gv, "node_dict": node_dict})
         return toks
 
     def _extract_entity_spans(
@@ -188,7 +190,7 @@ class UnifiedDataset(Dataset):
 
 
 def collate_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
-    batch = {"text_view": {}, "graph_view": {}}
+    batch = {"text_view": {}, "graph_view": {}, "node_dict": []}
     tvs = [s["text_view"] for s in samples]
     batch["text_view"]["ID"] = [t["ID"] for t in tvs]
     batch["text_view"]["question"] = [t["question"] for t in tvs]
@@ -224,7 +226,7 @@ def collate_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
     batch["graph_view"]["gnn_data"] = Batch.from_data_list(
         [g["gnn_data"] for g in gvs]
     )
-    batch["graph_view"]["node_dict"] = [g["node_dict"] for g in gvs]
+    batch["node_dict"] = [t["node_dict"] for t in samples]
     return batch
 
 
