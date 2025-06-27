@@ -1,0 +1,52 @@
+Number of hops :: 2
+Inverse Relations :: YES
+
+Number of cases with errors for grailqa dev: 20
+Average subgraph nodes for grailqa-train : 727.9744
+Max subgraph nodes for grailqa-train : 3256
+Min subgraph nodes for grailqa-train : 0
+
+Average subgraph node_coverage for grailqa-train : 0.9427
+Max subgraph node_coverage for grailqa-train : 1.0
+Min subgraph node_coverage for grailqa-train : 0.0
+
+Average subgraph edges for grailqa-train : 729.9271
+Max subgraph edges for grailqa-train : 3859
+Min subgraph edges for grailqa-train : 0
+
+Average subgraph tuples for grailqa-train : 2175.4316
+Max subgraph tuples for grailqa-train : 9972
+Min subgraph tuples for grailqa-train : 0
+
+Average subgraph relations for grailqa-train : 2175.4178
+Max subgraph relations for grailqa-train : 9972
+Min subgraph relations for grailqa-train : 0
+
+Average subgraph rel_coverage for grailqa-train : 0.8624
+Max subgraph rel_coverage for grailqa-train : 1.0
+Min subgraph rel_coverage for grailqa-train : 0.0
+
+Average subgraph nodes for grailqa-dev : 641.8327
+Max subgraph nodes for grailqa-dev : 3256
+Min subgraph nodes for grailqa-dev : 0
+
+Average subgraph node_coverage for grailqa-dev : 0.9516
+Max subgraph node_coverage for grailqa-dev : 1.0
+Min subgraph node_coverage for grailqa-dev : 0.0
+
+Average subgraph edges for grailqa-dev : 644.9887
+Max subgraph edges for grailqa-dev : 3859
+Min subgraph edges for grailqa-dev : 0
+
+Average subgraph tuples for grailqa-dev : 1952.9692
+Max subgraph tuples for grailqa-dev : 9972
+Min subgraph tuples for grailqa-dev : 0
+
+Average subgraph relations for grailqa-dev : 1952.9576
+Max subgraph relations for grailqa-dev : 9972
+Min subgraph relations for grailqa-dev : 0
+
+Average subgraph rel_coverage for grailqa-dev : 0.9031
+Max subgraph rel_coverage for grailqa-dev : 1.0
+Min subgraph rel_coverage for grailqa-dev : 0.0
+
