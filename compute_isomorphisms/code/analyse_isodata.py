@@ -2,6 +2,8 @@ import os
 from pprint import pprint
 import argparse
 import json
+import networkx as nx
+import numpy as np
 
 from create_sem_matcher import process_ontology
 from create_isomorphisms import *
@@ -122,11 +124,26 @@ def validate_relations():
     reverse_properties_file     =  '../../ontology/reverse_properties'
     domain_dict_file            =  '../../ontology/domain_dict'
 
-    all_tuples_file             =  open('../../ontology/fb_tuples','w')
+    all_tuples_file             =  open('../../ontology/fb_tuples_all','w')
 
     domain_dict                 =  json.load(open(domain_dict_file))
 
     reverse_properties, relation_dr, relations, upper_types, types, common_rels = process_ontology(fb_roles_file, fb_types_file, reverse_properties_file)
+
+    rev_relations               = {}
+
+    for rel in reverse_properties:
+        try:
+            assert reverse_properties[reverse_properties[rel]] == rel, f'Inconsistent reverse relation for {rel}'
+        except Exception as e:
+            print(rel, reverse_properties[rel])
+            
+        rev_relations[reverse_properties[rel]] = rel
+        rev_relations[rel] = reverse_properties[rel]
+
+    print(f'Loaded {len(reverse_properties)} relations and {len(rev_relations)} reverse relations')
+
+    # import pdb; pdb.set_trace()
 
     classes2domains             = {}
     dup_domains                 = 0
@@ -202,21 +219,7 @@ def validate_relations():
     print(len(uptype_dict),  'upper types found')
     print(len(lowtype_dict), 'lower types found')
 
-    pairwise_rels               = ddict(list)
-
-    rev_relations               = {}
-
-    for rel in reverse_properties:
-
-        try:
-            assert reverse_properties[reverse_properties[rel]] == rel, f'Inconsistent reverse relation for {rel}'
-        except Exception as e:
-            print(rel, reverse_properties[rel])
-            
-
-        rev_relations[reverse_properties[rel]] = rel
-        rev_relations[rel] = reverse_properties[rel]
-
+    pairwise_rels            = ddict(list)
     unique_tuples            = set()
 
     for rel in relation_dr:
@@ -226,11 +229,11 @@ def validate_relations():
         sub_srcs = list(lowtype_dict[src])
         sub_tgts = list(lowtype_dict[tgt])
 
-        # srcs     = [src] + sub_srcs
-        # tgts     = [tgt] + sub_tgts
+        srcs     = [src] + sub_srcs
+        tgts     = [tgt] + sub_tgts
 
-        srcs     = [src]
-        tgts     = [tgt]
+        # srcs     = [src]
+        # tgts     = [tgt]
 
         for src in srcs:
             for tgt in tgts:
@@ -242,11 +245,18 @@ def validate_relations():
                     pairwise_rels[(tgt, src)].append(rev_relations[rel])
                     unique_tuples.add((tgt, src, rev_relations[rel]))
                 
+                else:
+                    pairwise_rels[(tgt, src)].append(f'rev_{rel}')
+                    unique_tuples.add((tgt, src, f'rev_{rel}'))
+
+                
     print(len(pairwise_rels), 'pairwise relations found')
     print(len(unique_tuples), 'unique tuples found')
 
     for elem in unique_tuples:
         all_tuples_file.write(f'{elem[0]}\t{elem[2]}\t{elem[1]}\n')
+    
+    all_tuples_file.close()
 
 
     #### We now need to validate the relation coverage for each instance of the isomorphism dataset
@@ -414,12 +424,245 @@ def filter_grailqa_isomorphisms():
             pprint(isomorphism_dict[dataset][split])
 
             
-            
 
+def tiara_coverage():
+
+    datasets = ['grailqa']# 'webqsp', 'graphquestions', 'cwq']
+
+    splits  = {
+                # 'webqsp': ['train', 'test'],
+                'grailqa': ['dev', 'train', 'test'],
+                # 'cwq': ['train', 'test', 'dev'],
+                # 'graphquestions': ['train', 'test']
+            }
+
+
+    for dataset in datasets:
+
+        for split in splits[dataset]:
+
+            relation_coverage_dict                             = ddict(list)
+
+            filtered_input_data                                = json.load(open(f'../output_data/{dataset}.{split}.filtered.json'))
+
+            if split in ['dev', 'test']:
+                filtered_schema_data                           = f'/data/shire/projects/GenQA/ISOKBQA/KC/papers/TIARA/dataset/GrailQA/schema_linking_results/dense_retrieval_{dataset}_{split}-filtered.jsonl'
+            else:
+                filtered_schema_data                           = f'/data/shire/projects/GenQA/ISOKBQA/KC/papers/TIARA/dataset/GrailQA/schema_linking_results/dense_retrieval_{dataset}_{split}.jsonl'
+
+            filtered_input_dict                                = {}
+
+            for elem in filtered_input_data:
+                filtered_input_dict[str(elem['qid'])]          = elem
+
+            filtered_schema_dict                               = {}
+            filtered_schema_data                               = [json.loads(line) for line in open(filtered_schema_data, 'r')]
+
+            for elem in filtered_schema_data:
+                filtered_schema_dict[str(elem['qid'])]         = elem
+
+            print(f'Processing {dataset} {split} with {len(filtered_input_data)} queries and {len(filtered_schema_data)} schema links')
+
+            for qid in filtered_input_dict:
+
+                inp_data                                     = filtered_input_dict[qid]
+                schema_data                                  = filtered_schema_dict.get(qid, None)
+
+                if schema_data is None:
+                    print(f'No schema data for {qid}, skipping...')
+                    continue
+
+                assert str(inp_data['qid']) == str(schema_data['qid']), f'QID mismatch for {inp_data["qid"]}'
+
+                query_graph     = inp_data['graph_query']
+                nodes, edges    = query_graph['nodes'], query_graph['edges']
+                relations       = set([edge['relation'] for edge in edges])
+
+                if split == 'test':
+                    classes         = [node['id'] for node in nodes if node['node_type'] != 'entity' and node['node_type'] != 'literal']
+                else:
+                    classes         = [node['class'] for node in nodes if node['node_type'] != 'entity' and node['node_type'] != 'literal']
+
+                predicted_classes   = schema_data['classes'][:args.top_k]
+                predicted_relations = schema_data['relations'][:args.top_k]
+
+                curr_class_coverage      = 1 - (len(set(classes) - set(predicted_classes)) / len(set(classes)))
+                relation_coverage_dict['class coverage'].append(curr_class_coverage)
+
+                curr_relation_coverage   = 1 - (len(set(relations) - set(predicted_relations)) / len(set(relations)))
+                relation_coverage_dict['relation coverage'].append(curr_relation_coverage)
+
+
+            for cat in relation_coverage_dict:
+                avg_cov = np.mean(relation_coverage_dict[cat])
+                print(f'Average {cat} for {dataset} {split}: {avg_cov:.4f}')
+
+
+
+
+def create_max_subgraphs():
+
+    
+    all_tuples_file       = open('../../ontology/fb_tuples')
+    triples               = []
+
+    datasets              = ['grailqa']# 'webqsp', 'graphquestions', 'cwq']
+
+    splits                = {'grailqa': ['train', 'dev']}
+
+    rev_flag              = args.rev_flag
+
+    ############# Load all the tuples from the file
+
+    pairwise_rels         = ddict(list)
+
+    for line in all_tuples_file:
+        fields = line.strip().split('\t')
+        if len(fields) != 3:
+            continue
+        head, rel, tail = fields
+
+        if rev_flag == 0:
+            if rel.startswith('rev_'):
+                continue
+
+        triples.append((head, rel, tail))
+        if (head, tail) not in pairwise_rels:
+            pairwise_rels[(head, tail)] = []
+        pairwise_rels[(head, tail)].append(rel)
+
+
+    G = nx.MultiDiGraph()
+    # G = G.to_undirected()
+
+    num_inv_relations       = 0
+    for head, rel, tail in triples:
+        G.add_edge(head, tail, relation=rel)
+        
+        if rev_flag ==1:
+            if (tail, head) not in pairwise_rels:
+                G.add_edge(tail, head, relation= f'rev_{rel}')
+                num_inv_relations += 1
+            
+    print(f'Loaded {len(triples)} tuples with {num_inv_relations} inverse relations')
+
+    # exit()
+
+    subgraph_dict                              = ddict(lambda: ddict(list))
+    for dataset in datasets:
+        for split in splits[dataset]:
+
+            iso_data_path                      = f'../output_data/{dataset}.{split}.filtered.json'
+            iso_data                           = json.load(open(iso_data_path))
+            
+            cases                              = 0
+            print(f'Validating relations for {dataset} {split} with {len(iso_data)} queries')
+
+            for line in tqdm(iso_data):
+
+                query_graph     = line['graph_query']
+                nodes, edges    = query_graph['nodes'], query_graph['edges']
+
+                relations       = set([edge['relation'] for edge in edges])
+                ent_classes     = [node['class'] for node in nodes if node['node_type'] == 'entity' or node['node_type'] == 'literal']
+
+                node_classes    = set([node['class'] for node in nodes])
+                
+                # Step 4: Get nodes at k-hop distance from a source
+
+                k_hop_nodes     = []
+                k_hop_edges     = []
+                k_hop_tuples    = []
+                k_hop_relations = []
+
+                for node in ent_classes:
+                    try:
+                        start_node  = node
+                        k           = args.num_hop
+                        # shortest_paths = nx.single_source_shortest_path_length(G, start_node)
+                        # # import pdb; pdb.set_trace()
+                        # k_hop_nodes.extend([node for node, dist in shortest_paths.items() if dist <= k])
+
+                        paths = nx.single_source_shortest_path(G, start_node, cutoff=k)
+
+                        for target_node, path in paths.items():
+                            if len(path) <= 1:
+                                continue  # Skip the source node itself
+
+                            for i in range(len(path) - 1):
+                                u, v = path[i], path[i + 1]
+                                # Get all edges u->v, pick the first for now
+                                
+                                k_hop_nodes.append(u)
+                                k_hop_nodes.append(v)
+                                k_hop_edges.append((u, v))
+
+                                edge_data = G.get_edge_data(u, v)
+
+                                if edge_data is not None:
+                                    poss_relations = len(edge_data)
+                                    for idx in range(poss_relations):
+                                        rel = edge_data[idx]['relation']
+                                        k_hop_tuples.append((u, rel, v))
+                                        k_hop_relations.append(rel)
+                                    
+                                edge_data = G.get_edge_data(v, u)
+
+                                if edge_data is not None:
+                                    poss_relations = len(edge_data)
+                                    for idx in range(poss_relations):
+                                        rel = edge_data[idx]['relation']
+                                        k_hop_tuples.append((v, rel, u))
+                                        k_hop_relations.append(rel)
+
+                    except Exception as e:
+                        cases += 1
+                        # import pdb; pdb.set_trace()
+                        print(f'Error processing node {node}: {e}')
+                        continue
+
+                unique_k_hop_nodes      = set(k_hop_nodes)
+                unique_k_hop_edges      = set(k_hop_edges)
+                unique_k_hop_tuples     = set(k_hop_tuples)
+                unique_k_hop_relations  = set(k_hop_relations)
+
+
+                # subgraph_dict[dataset][split].append(len(unique_k_hop_nodes))
+                node_coverage               = 1 -  len(node_classes - unique_k_hop_nodes) / len(node_classes) 
+                rel_coverage                = 1 -  len(relations - unique_k_hop_relations) / len(relations) 
+
+                subgraph_dict[f'{dataset}-{split}']['nodes'].append(len(unique_k_hop_nodes))
+                subgraph_dict[f'{dataset}-{split}']['node_coverage'].append(node_coverage)
+                subgraph_dict[f'{dataset}-{split}']['edges'].append(len(unique_k_hop_edges))
+                subgraph_dict[f'{dataset}-{split}']['tuples'].append(len(unique_k_hop_tuples))
+                subgraph_dict[f'{dataset}-{split}']['relations'].append(len(unique_k_hop_relations))
+                subgraph_dict[f'{dataset}-{split}']['rel_coverage'].append(rel_coverage)
+
+                # if node_coverage < 1 or rel_coverage < 1:
+                #     import pdb; pdb.set_trace()
+                
+
+            print(f'Number of cases with errors for {dataset} {split}: {cases}')
+
+    for dataset in subgraph_dict:
+        for cat in subgraph_dict[dataset]:
+            avg_size = sum(subgraph_dict[dataset][cat]) / len(subgraph_dict[dataset][cat])
+            max_size = max(subgraph_dict[dataset][cat])
+            min_size = min(subgraph_dict[dataset][cat])
+
+            print(f'Average subgraph {cat} for {dataset} : {avg_size:.4f}')
+            print(f'Max subgraph {cat} for {dataset} : {max_size}')
+            print(f'Min subgraph {cat} for {dataset} : {min_size}')
+            print()
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Process isomorphism datasets')
     parser.add_argument('--step', required=True, help='Step to perform')
+    parser.add_argument('--num_hop', required=False, default=3, type=int, help='Number of hops for k-hop subgraph')
+    parser.add_argument('--rev_flag',required=False, default=1, type=int, help='Flag for reverse relations')
+    parser.add_argument('--top_k',required=False, default=25, type=int, help='Flag for reverse relations')
+
 
     args = parser.parse_args()
 
@@ -431,3 +674,9 @@ if __name__ == '__main__':
     
     if args.step == 'filter_grailqa':
         filter_grailqa_isomorphisms()
+    
+    if args.step == 'max_subgraph':
+        create_max_subgraphs()
+    
+    if args.step == 'tiara_cov':
+        tiara_coverage()
