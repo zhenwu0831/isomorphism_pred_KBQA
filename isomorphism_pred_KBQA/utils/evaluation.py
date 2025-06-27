@@ -3,6 +3,8 @@ import os,sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+sys.path.append("../")
+
 import torch
 from typing import List, Any
 from compute_isomorphisms.code.create_sem_matcher import *
@@ -10,7 +12,7 @@ from compute_isomorphisms.code.create_sem_matcher import *
 eps = 1e-5
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-ONTOLOGY_DIR = os.path.join(BASE_DIR, "ontology")
+ONTOLOGY_DIR = os.path.join("../", "ontology")
 
 FB_ROLES_FILE      = os.path.join(ONTOLOGY_DIR, "fb_roles")
 FB_TYPES_FILE      = os.path.join(ONTOLOGY_DIR, "fb_types")
