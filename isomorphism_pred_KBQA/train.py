@@ -178,11 +178,15 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
                     # remap each <E#> back to original id before SPARQL
                     if args.convert_entities:
                         node_map = tv["entity_ids"][i]
+                        mapped_sexps = []
                         for sexp in sample_sexps:
                             # replace placeholders
-                            print(f"Pred S-exp before mapping: {sexp}")
+                            if b_idx == 0 and i == 0:
+                                print(f"Pred S-exp before mapping: {sexp}")
                             for idx, orig_ent in node_map.items():
                                 sexp = sexp.replace(f"<E{idx}>", orig_ent)
+                            mapped_sexps.append(sexp)
+                        sample_sexps = mapped_sexps
                         # try:
                         #     sparql = lisp_to_sparql(sexp)
                         #     for ent in execute_sparql(sparql):
@@ -198,22 +202,14 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
                     #     gen_hits += hit
 
                     # compute em
-                    if gen_count == 0 and b_idx == 0:
-                        best_pred = sample_sexps[0]
-
-                    em = compute_exact_match(best_pred, gold_sexps[i])
+                    em = 0
+                    for p_sexp in sample_sexps:
+                        em += compute_exact_match(p_sexp, gold_sexps_mapped[i])
                     em_sum += em
 
                     # compute f1
                     # if k:
                     #     f1_sum += compute_f1(ranked[:k], gold_entities)
-
-                    if gen_count == 0 and b_idx == 0:
-                        print(f"\nPred S-exp after mapping: {best_pred}")
-                        print(f"Gold S-exp: {gold_sexps[i]}")
-                        print(f"Mapped S-exp: {gold_sexps_mapped[i]}")
-                        print(f"EM? {em}\n")
-
                     gen_count += 1
 
     # aggregate

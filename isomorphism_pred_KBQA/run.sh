@@ -12,7 +12,7 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
 export CUDA_LAUNCH_BLOCKING=1
 
 # ─── Defaults ──────────────────────────────────────────────────────────────────
-MODEL_TYPE="text"                   # text, graph, or cod
+MODEL_TYPE="cod"                   # text, graph, or cod
 BACKBONE="t5"                       # bert, t5, gpt2 (ignored for graph)
 TASKS="iso"                  # comma‐sep list (ignored for cod)
 DATASET="webqsp"                   # e.g. webqsp, cwq, grailqa
@@ -24,7 +24,7 @@ RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/data/${
 OUTPUT_DIR_BASE="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/ckpts"
 
 PTLM_MODEL="t5-base"  # bert-base-uncased, t5-base, gpt2 (ignored for graph)
-BATCH_SIZE=16
+BATCH_SIZE=8
 EPOCHS=50
 LR=5e-5
 PATIENCE=5
@@ -36,7 +36,7 @@ WARMUP_STEPS=0
 T_MAX=${EPOCHS}
 ETA_MIN=1e-5
 
-INPUT_MAX_LENGTH=512
+INPUT_MAX_LENGTH=1024
 GENERATION_MAX_LENGTH=128
 MAX_SEQ_LEN=512
 
@@ -50,6 +50,7 @@ DROPOUT=0.2
 
 # ─── list of seeds to run sequentially ───────────────────────────────────────
 # SEEDS=(18 42 15213 123456 987654)
+# SEEDS=(42 15213 123456)
 SEEDS=(42) 
 
 WEIGHTS="1"

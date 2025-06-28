@@ -17,6 +17,7 @@ class BertMultiTaskModel(nn.Module):
         self.tokenizer = tokenizer
         self.backbone = AutoModel.from_pretrained(params.ptlm_model)
         self.hidden = self.backbone.config.hidden_size
+        self.backbone.resize_token_embeddings(len(tokenizer))
         if "iso" in self.modes:
             self.classifier = nn.Linear(self.hidden, params.num_classes)
             self.dropout = nn.Dropout(params.dropout)
@@ -75,13 +76,14 @@ class T5MultiTaskModel(nn.Module):
                 labels: torch.LongTensor = None,
                 entity_spans: list = None):
         gen_outputs = None
-        if "generation" in self.modes:
+        if "generation" in self.modes and labels is not None:
             gen_outputs = self.backbone(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
                 return_dict=True
             )
+        else: gen_outputs = None
         encoder_hidden = self.backbone.encoder(
             input_ids=input_ids,
             attention_mask=attention_mask,
@@ -128,13 +130,14 @@ class GPT2MultiTaskModel(nn.Module):
                 attention_mask: torch.LongTensor,
                 labels: torch.LongTensor = None):
         gen_outputs = None
-        if "generation" in self.modes:
+        if "generation" in self.modes and labels is not None:
             gen_outputs = self.backbone(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
                 labels=labels,
                 return_dict=True
             )
+        else: gen_outputs = None
         hidden = self.backbone.transformer(
             input_ids=input_ids,
             attention_mask=attention_mask,
