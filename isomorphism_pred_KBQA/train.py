@@ -1,6 +1,7 @@
 # train.py
 
 import os
+import sys
 import json
 import argparse
 import dill
@@ -14,9 +15,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 import torch.optim as optim
+from torch.optim import AdamW
 from transformers import (
     AutoTokenizer,
-    AdamW,
     get_linear_schedule_with_warmup
 )
 import wandb
@@ -45,9 +46,10 @@ from models.cod import CoDModel
 
 # from accelerate import Accelerator
 from torch.cuda.amp import autocast, GradScaler
-# from bitsandbytes.optim import Adam8bit
 
 from torch.utils import checkpoint
+
+from bitsandbytes.optim import Adam8bit
 
 def train_epoch_text(
     args, model, loader, optimizer, scheduler,
@@ -122,15 +124,15 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
     em_sum,  f1_sum    = 0, 0
 
     with torch.no_grad():
-        for batch in tqdm(loader, desc="Evaluating", leave=False):
+        for b_idx, batch in enumerate(tqdm(loader, desc="Evaluating", leave=False), start=0):
             tv = batch["text_view"]
-            gv_node_dicts = batch["node_dict"] 
             in_ids = tv["input_ids"].to(device)
             attn   = tv["attention_mask"].to(device)
             iso_l  = tv.get("iso_label")
             spans  = tv.get("entity_spans", None)
             gold_spans = tv.get("answers")
-            gold_sexps = tv.get("gold_sexp")
+            gold_sexps = tv.get("gold_sexp_raw", None)
+            gold_sexps_mapped = tv.get("gold_sexp", None)
 
             if "generation" in tasks:
                 gen_inputs = {"input_ids": in_ids, "attention_mask": attn}
@@ -168,17 +170,19 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
 
                 for i in range(batch_size):
                     sample_sexps = decoded[i*beams:(i+1)*beams]
-                    gold_entities = [a for a in gold_spans[i]]
-                    count_by_ent = Counter()
+                    # gold_entities = [a for a in gold_spans[i]]
+                    # count_by_ent = Counter()
 
                     # import pdb; pdb.set_trace()
 
                     # remap each <E#> back to original id before SPARQL
-                    node_map = tv["entity_ids"][i]
-                    for sexp in sample_sexps:
-                        # replace placeholders
-                        for idx, orig_ent in node_map.items():
-                            sexp = sexp.replace(f"<E{idx}>", orig_ent)
+                    if args.convert_entities:
+                        node_map = tv["entity_ids"][i]
+                        for sexp in sample_sexps:
+                            # replace placeholders
+                            print(f"Pred S-exp before mapping: {sexp}")
+                            for idx, orig_ent in node_map.items():
+                                sexp = sexp.replace(f"<E{idx}>", orig_ent)
                         # try:
                         #     sparql = lisp_to_sparql(sexp)
                         #     for ent in execute_sparql(sparql):
@@ -192,21 +196,25 @@ def eval_epoch_text(args, model, loader, device, tasks, tokenizer, eps=1e-5):
                     # if k:
                     #     hit = sum(1 for e in ranked[:k] if e in gold_entities) / (k + eps)
                     #     gen_hits += hit
-                    # gen_count += 1
 
                     # compute em
-                    best_pred = sample_sexps[0]
-                    for idx, orig in node_map.items():
-                        best_pred = best_pred.replace(f"<E{idx}>", orig)
-                    try:
-                        em = compute_exact_match(best_pred, gold_sexps[i])
-                    except Exception:
-                        em = 0
+                    if gen_count == 0 and b_idx == 0:
+                        best_pred = sample_sexps[0]
+
+                    em = compute_exact_match(best_pred, gold_sexps[i])
                     em_sum += em
 
                     # compute f1
                     # if k:
                     #     f1_sum += compute_f1(ranked[:k], gold_entities)
+
+                    if gen_count == 0 and b_idx == 0:
+                        print(f"\nPred S-exp after mapping: {best_pred}")
+                        print(f"Gold S-exp: {gold_sexps[i]}")
+                        print(f"Mapped S-exp: {gold_sexps_mapped[i]}")
+                        print(f"EM? {em}\n")
+
+                    gen_count += 1
 
     # aggregate
     metrics = {}
@@ -229,16 +237,16 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
     iso_loss_fn  = torch.nn.CrossEntropyLoss()
 
     for batch in tqdm(loader, desc="Training", leave=False):
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
         gv = batch["graph_view"]
 
         # with autocast():
-        def forward_fn(gv):
+        # def forward_fn(gv):
             # Use checkpointing to save memory
-            return model(gv)
-        # out, _ = model(gv)
+            # return model(gv)
+        out, _ = model(gv)
 
-        out, _ = checkpoint.checkpoint(forward_fn, gv)
+        # out, _ = checkpoint.checkpoint(forward_fn, gv)
 
         loss = torch.tensor(0.0, device=device)
 
@@ -258,10 +266,10 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
             loss   += weights.get("iso", 1.0) * l_iso
 
         loss.backward()
-        try:
-            optimizer.step()
-        except:
-            import pdb; pdb.set_trace()
+        # try:
+        optimizer.step()
+        # except:
+        #     import pdb; pdb.set_trace()
 
 
         # scaler.scale(loss).backward()
@@ -281,6 +289,12 @@ def eval_epoch_graph(model, loader, device):
     with torch.no_grad():
         for batch in tqdm(loader, desc="Evaluating (graph)", leave=False):
             gv = batch["graph_view"]
+
+            for k, v in gv.items():
+                # we know gnn_data is a torch_geometric Batch
+                if hasattr(v, "to"):
+                    gv[k] = v.to(device)
+
             out, _ = model(gv)
 
             # ranking hits@k over each graph
@@ -398,6 +412,8 @@ def main():
     parser.add_argument("--patience",    type=int, default=5)
 
     parser.add_argument("--debug", action="store_true", help="Run in debug mode with smaller dataset")
+    parser.add_argument("--convert_entities", action="store_true",)
+
     args = parser.parse_args()
 
     # --- setup ---
@@ -451,26 +467,31 @@ def main():
     if args.backbone == "gpt2" and tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    entity_tokens = [f"<E{i}>" for i in range(max_entities)]
     special_tokens = {
             'less': ' <',
             'less_or_equal': ' <='
         }
 
-    tokenizer.add_tokens(entity_tokens + list(special_tokens.values()))
+    print("DEBUGGING: convert_entities is", args.convert_entities)
+
+    if args.convert_entities:
+        entity_tokens = [f"<E{i}>" for i in range(max_entities)]
+        tokenizer.add_tokens(entity_tokens + list(special_tokens.values()))
+    else:
+        tokenizer.add_tokens(list(special_tokens.values()))
 
     train_loader = get_dataloader(
-        train, args, tokenizer, modes=tasks, convert_entities=True,
+        train, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=True
     )
     dev_loader = get_dataloader(
-        dev, args, tokenizer, modes=tasks, convert_entities=True,
+        dev, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=False
     )
     test_loader = get_dataloader(
-        test, args, tokenizer, modes=tasks, convert_entities=True,
+        test, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=False
     )
@@ -504,10 +525,12 @@ def main():
     model.to(device)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    if args.debug:
-        optimizer = AdamW(trainable_params, lr=args.lr)
-    else:
-        optimizer = AdamW(trainable_params, lr=args.lr)
+    optimizer = Adam8bit(trainable_params, lr=args.lr)
+
+    # if args.debug:
+    #     optimizer = Adam8bit(trainable_params, lr=args.lr)
+    # else:
+    #     optimizer = AdamW(trainable_params, lr=args.lr)
     # scaler = GradScaler()
     # model, optimizer, train_loader, dev_loader, test_loader = accelerator.prepare(
     #     model, optimizer, train_loader, dev_loader, test_loader
@@ -632,63 +655,59 @@ def main():
     model.eval()
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Predicting", leave=False):
-            tv = batch["text_view"]
-            IDs = tv["ID"]
+            tv     = batch["text_view"]
+            IDs    = tv["ID"]
             in_ids = tv["input_ids"].to(device)
             attn   = tv["attention_mask"].to(device)
             spans  = tv.get("entity_spans", None)
 
-            kwargs = {"input_ids": in_ids, "attention_mask": attn}
-            if "generation" in tasks:
-                gen_inputs = kwargs.copy()
-            if "ranking" in tasks:
-                kwargs["entity_spans"] = spans
-
+            out = {}
             if args.model_type == "graph":
                 out, _ = model(batch["graph_view"])
             else:
-                kwargs = {"input_ids": in_ids, "attention_mask": attn}
-                if "generation" in tasks:
-                    gen_inputs = kwargs.copy()
-                if "ranking" in tasks:
-                    kwargs["entity_spans"] = spans
-                out, _ = model(**kwargs)
+                do_classify = any(t in tasks for t in ("iso", "ranking"))
+                if do_classify:
+                    fw = {"input_ids": in_ids, "attention_mask": attn}
+                    if "ranking" in tasks:
+                        fw["entity_spans"] = spans
+                    out, _ = model(**fw)
 
-            # ISO
-            iso_p = (out["iso_logits"].argmax(-1).cpu().tolist()
-                     if "iso" in tasks else None)
-            # RANKING
+            iso_p = None
+            if "iso" in tasks:
+                iso_p = out["iso_logits"].cpu().tolist()
+
             rank_p = None
             if "ranking" in tasks:
                 scores = out["entity_scores"].cpu()
                 labs, _ = pad_entity_labels(tv["entity_labels"], device)
                 rank_p = [
-                    torch.argsort(scores[i], descending=True)[:int(labs[i].sum())].tolist()
+                    torch.argsort(scores[i], descending=True)[: int(labs[i].sum())]
+                        .tolist()
                     for i in range(scores.size(0))
                 ]
-            # GENERATION
+
             gen_p = None
             if "generation" in tasks:
                 beams = args.num_beams
                 gens = model.generate(
-                    **gen_inputs,
+                    input_ids=in_ids,
+                    attention_mask=attn,
                     max_length=args.generation_max_length,
-                    num_beams=beams
+                    num_beams=beams,
                 )
                 dec = tokenizer.batch_decode(gens, skip_special_tokens=True)
-                gen_p = [dec[i*beams:(i+1)*beams] for i in range(len(IDs))]
+                gen_p = [ dec[i*beams:(i+1)*beams] for i in range(len(IDs)) ]
 
-            for i,qid in enumerate(IDs):
+            for i, qid in enumerate(IDs):
                 rec = {"ID": qid}
-                if iso_p is not None:    rec["iso_pred"] = iso_p[i]
-                if rank_p is not None:   rec["rank_pred"] = rank_p[i]
-                if gen_p is not None:    rec["gen_pred"] = gen_p[i]
+                if iso_p  is not None: rec["iso_pred" ] = iso_p[i]
+                if rank_p is not None: rec["rank_pred"] = rank_p[i]
+                if gen_p  is not None: rec["gen_pred" ] = gen_p[i]
                 predictions.append(rec)
 
     out = {"metrics": test_metrics, "predictions": predictions}
     with open(os.path.join(args.output_dir, "test_predictions.json"), "w") as wf:
         json.dump(out, wf, indent=2)
-
     print("Test metrics:", test_metrics)
     wandb.log({f"test_{k}": v for k,v in test_metrics.items()})
     wandb.finish()

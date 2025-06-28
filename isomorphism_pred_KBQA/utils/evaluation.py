@@ -128,6 +128,7 @@ def compute_hits_at_k(all_predictions, all_gold_labels):
     return hits_at_k_scores
 
 def compute_exact_match(pred, ref):
+    # import pdb; pdb.set_trace() 
     em = int(matcher.same_logical_form(pred, ref))
     return em
 

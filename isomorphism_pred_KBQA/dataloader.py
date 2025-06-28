@@ -110,7 +110,10 @@ class UnifiedDataset(Dataset):
             }
 
             if "generation" in self.modes:
-                sexp = e["s_expression"]
+                sexp_raw = e["s_expression"]
+                sexp = sexp_raw
+                if self.convert_entities:
+                    sexp = self._map_entities(sexp, node_dict)
                 t2 = self.tokenizer(
                     sexp,
                     padding="max_length",
@@ -121,6 +124,7 @@ class UnifiedDataset(Dataset):
                 labels[labels == self.tokenizer.pad_token_id] = -100
                 tv["labels"] = labels
                 tv["gold_sexp"] = sexp
+                tv["gold_sexp_raw"] = sexp_raw
 
             if "iso" in self.modes:
                 idx = self.label_map[e["isomorphism"]]
@@ -142,9 +146,12 @@ class UnifiedDataset(Dataset):
 
             if self.convert_entities:
                 # node_dict: real_ent -> idx
+                # import pdb; pdb.set_trace()
                 inv_map = {idx: ent for ent, idx in node_dict.items()}
-                # build list  [ ent_for_<E0>, ent_for_<E1>, … ]
-                tv["entity_ids"] = [inv_map[i] for i in range(len(inv_map))]
+                # # build list  [ ent_for_<E0>, ent_for_<E1>, … ]
+                # tv["entity_ids"] = [inv_map[i] for i in range(len(inv_map))]
+                tv["entity_ids"] = inv_map
+
 
             # graph view
             q2 = self.tokenizer(
@@ -215,6 +222,12 @@ def collate_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
 
     if "entity_ids" in tvs[0]:
         batch["text_view"]["entity_ids"]   = [t["entity_ids"] for t in tvs]
+
+    if "gold_sexp" in tvs[0]:
+        batch["text_view"]["gold_sexp"] = [t["gold_sexp"] for t in tvs]
+
+    if "gold_sexp_raw" in tvs[0]:
+        batch["text_view"]["gold_sexp_raw"] = [t["gold_sexp_raw"] for t in tvs]
 
     gvs = [s["graph_view"] for s in samples]
     batch["graph_view"]["input_ids"] = pad_sequence(

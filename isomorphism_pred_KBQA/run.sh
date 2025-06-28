@@ -9,21 +9,22 @@
 set -euo pipefail
 
 export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128
+export CUDA_LAUNCH_BLOCKING=1
 
 # ─── Defaults ──────────────────────────────────────────────────────────────────
-MODEL_TYPE="graph"                   # text, graph, or cod
+MODEL_TYPE="text"                   # text, graph, or cod
 BACKBONE="t5"                       # bert, t5, gpt2 (ignored for graph)
 TASKS="iso"                  # comma‐sep list (ignored for cod)
-DATASET="grailqa"                   # e.g. webqsp, cwq, grailqa
+DATASET="webqsp"                   # e.g. webqsp, cwq, grailqa
 
 # ─── pick the correct paths based on DATASET ──────────────────────────────────
-DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/${DATASET}/KBQA_walklet_edge_label_768_dim_data.dill"
-RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/data/${DATASET}/relations_dict.json"
+DATA_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/data/${DATASET}/KBQA_walklet_edge_label_768_dim_data.dill"
+RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/data/${DATASET}/relations_dict.json"
 
-OUTPUT_DIR_BASE="/data/shire/projects/GenQA/ISOKBQA/isomorphism_prediction/ckpts"
+OUTPUT_DIR_BASE="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/ckpts"
 
 PTLM_MODEL="t5-base"  # bert-base-uncased, t5-base, gpt2 (ignored for graph)
-BATCH_SIZE=1
+BATCH_SIZE=16
 EPOCHS=50
 LR=5e-5
 PATIENCE=5
@@ -41,7 +42,7 @@ MAX_SEQ_LEN=512
 
 GNN_MODEL="rgcn"
 GNN_DEPTH=2
-HIDDEN_DIM=256
+HIDDEN_DIM=512
 NODE_EMB_DIM=768
 
 SHARED_DIM=2048
@@ -78,7 +79,7 @@ for SEED in "${SEEDS[@]}"; do
   echo "=== Seed $SEED → output: $OUTPUT_DIR, wandb run: $WANDB_RUN ==="
 
   python train.py \
-    --debug \
+    --debug                \
     --model_type            "$MODEL_TYPE" \
     --backbone              "$BACKBONE" \
     --tasks                 "$TASKS" \
