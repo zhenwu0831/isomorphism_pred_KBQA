@@ -23,6 +23,7 @@ from transformers import (
 import wandb
 from tqdm import tqdm
 from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score
 
 from utils.utils import (
     compute_global_label_map,
@@ -59,59 +60,62 @@ def train_epoch_text(
     total_loss = 0.0
 
     for batch in tqdm(loader, desc="Training", leave=False):
-        optimizer.zero_grad()
-        tv = batch["text_view"]
-        in_ids = tv["input_ids"].to(device)
-        attn   = tv["attention_mask"].to(device)
+        try:
+            optimizer.zero_grad()
+            tv = batch["text_view"]
+            in_ids = tv["input_ids"].to(device)
+            attn   = tv["attention_mask"].to(device)
 
-        gen_l = tv.get("labels")
-        iso_l = tv.get("iso_label")
-        spans= tv.get("entity_spans")
-        labs = tv.get("entity_labels")
+            gen_l = tv.get("labels")
+            iso_l = tv.get("iso_label")
+            spans= tv.get("entity_spans")
+            labs = tv.get("entity_labels")
 
-        kwargs = {"input_ids": in_ids, "attention_mask": attn}
-        if "generation" in tasks:
-            kwargs["labels"] = gen_l.to(device)
-        if "ranking" in tasks:
-            kwargs["entity_spans"] = spans
+            kwargs = {"input_ids": in_ids, "attention_mask": attn}
+            if "generation" in tasks:
+                kwargs["labels"] = gen_l.to(device)
+            if "ranking" in tasks:
+                kwargs["entity_spans"] = spans
 
-        out, _ = model(**kwargs)
-        loss = torch.tensor(0.0, device=device)
+            out, _ = model(**kwargs)
+            loss = torch.tensor(0.0, device=device)
 
-        gen_loss, iso_loss, ranking_loss = None, None, None
+            gen_loss, iso_loss, ranking_loss = None, None, None
 
-        if "generation" in tasks:
-            gen_loss = out["gen_outputs"].loss
-            loss += weights["generation"] * gen_loss
-        if "iso" in tasks:
-            iso_loss = F.cross_entropy(out["iso_logits"], iso_l.to(device))
-            loss += weights["iso"] * iso_loss
-        if "ranking" in tasks:
-            scores, mask = pad_entity_labels(labs, device)
-            ranking_loss = F.binary_cross_entropy(out["entity_scores"] * mask, scores)
-            loss += weights["ranking"] * ranking_loss
+            if "generation" in tasks:
+                gen_loss = out["gen_outputs"].loss
+                loss += weights["generation"] * gen_loss
+            if "iso" in tasks:
+                iso_loss = F.cross_entropy(out["iso_logits"], iso_l.to(device))
+                loss += weights["iso"] * iso_loss
+            if "ranking" in tasks:
+                scores, mask = pad_entity_labels(labs, device)
+                ranking_loss = F.binary_cross_entropy(out["entity_scores"] * mask, scores)
+                loss += weights["ranking"] * ranking_loss
 
-        loss.backward()
-        optimizer.step()
+            loss.backward()
+            optimizer.step()
 
-        if args.scheduler is not None and args.scheduler in ("linear", "onecycle"):
-            scheduler.step()
+            if args.scheduler is not None and args.scheduler in ("linear", "onecycle"):
+                scheduler.step()
 
-        global_step += 1
+            global_step += 1
 
-        if scheduler is not None and hasattr(scheduler, "get_last_lr"):
-            current_lr = scheduler.get_last_lr()[0]
-        else:
-            current_lr = optimizer.param_groups[0]["lr"]
+            if scheduler is not None and hasattr(scheduler, "get_last_lr"):
+                current_lr = scheduler.get_last_lr()[0]
+            else:
+                current_lr = optimizer.param_groups[0]["lr"]
 
-        wandb.log({
-            "train/generation_loss": gen_loss.item()     if gen_loss     is not None else None,
-            "train/iso_loss":        iso_loss.item()     if iso_loss     is not None else None,
-            "train/ranking_loss":    ranking_loss.item() if ranking_loss is not None else None,
-            "train/lr":              current_lr,
-        }, step=global_step)
+            wandb.log({
+                "train/generation_loss": gen_loss.item()     if gen_loss     is not None else None,
+                "train/iso_loss":        iso_loss.item()     if iso_loss     is not None else None,
+                "train/ranking_loss":    ranking_loss.item() if ranking_loss is not None else None,
+                "train/lr":              current_lr,
+            }, step=global_step)
 
-        total_loss += loss.item()
+            total_loss += loss.item()
+        except Exception as e:
+            import pdb; pdb.set_trace()
 
     return total_loss / len(loader), global_step
 
@@ -325,7 +329,7 @@ def eval_epoch_graph(model, loader, device):
     if "ranking" in model.modes:
         metrics["hits@k_graph"] = rank_hits / max(rank_count, 1)
     if "iso" in model.modes:
-        metrics["iso_f1_graph"] = f1_score(iso_labels, iso_preds, average="macro")
+        metrics["iso_f1"] = f1_score(iso_labels, iso_preds, average="macro")
     return metrics
 
 def train_epoch_cod(model, loader, optimizer, device):
@@ -354,7 +358,9 @@ def eval_epoch_cod(model, loader, device):
             preds = logits.argmax(-1).cpu().tolist()
             all_preds.extend(preds)
             all_labels.extend(iso_l.cpu().tolist())
-    from sklearn.metrics import f1_score
+        
+        
+    
     return {"iso_f1": f1_score(all_labels, all_preds, average="macro")}
 
 
@@ -411,6 +417,8 @@ def main():
     parser.add_argument("--convert_entities", action="store_true",)
 
     args = parser.parse_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
     # --- setup ---
     device = seed_everything(args.seed)
@@ -521,8 +529,9 @@ def main():
     model.to(device)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    optimizer = Adam8bit(trainable_params, lr=args.lr)
+    optimizer = AdamW(trainable_params, lr=args.lr)
 
+    # optimizer = Adam8bit(trainable_params, lr=args.lr)
     # if args.debug:
     #     optimizer = Adam8bit(trainable_params, lr=args.lr)
     # else:
@@ -599,7 +608,7 @@ def main():
             )
             metrics = eval_epoch_text(args, model, dev_loader, device, tasks, tokenizer)
 
-        primary = ("hits@k_graph" if args.model_type=="graph"
+        primary = ("iso_f1" if args.model_type=="graph"
                     else "iso_f1" if args.model_type=="cod"
                     else "hits@k_ranking" if "ranking" in tasks
                     else "exact_match" if "generation" in tasks
@@ -621,14 +630,17 @@ def main():
         metric_str = "  ".join(f"dev_{k}={v:.4f}" for k,v in metrics.items())
         print(f"Epoch {ep}: train_loss={train_loss:.4f}  {metric_str}")
 
+        # import pdb; pdb.set_trace()
+
         # checkpoint on primary
         primary_val = metrics.get(primary, 0.0)
         if primary_val > best_val:
             best_val = primary_val
             torch.save(model.state_dict(), best_ckpt)
             print(f"↳ saved best {primary}={best_val:.4f}")
-
+        
         stopper(primary_val)
+
         if stopper.should_stop():
             print("Early stopping")
             break
@@ -646,6 +658,10 @@ def main():
     # log final metrics
     for k,v in test_metrics.items():
         wandb.log({f"test_{k}": v})
+
+    wandb.finish()
+    exit()
+
 
     predictions = []
     model.eval()

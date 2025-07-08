@@ -85,6 +85,7 @@ unused_code/
 compute_isomorphisms/input_data/
 compute_isomorphisms/output_data/
 isomorphism_pred_KBQA/ckpts/
+isomorphism_pred_KBQA/ckpts_rdutt/
 isomorphism_pred_KBQA/data/
 
 ontology/fb_tuples_all

@@ -97,11 +97,11 @@ def create_grailqa():
     class_list                      =    read_list_file(f'{input_dir}/grail_classes.txt')
     relations_list                  =    read_list_file(f'{input_dir}/grail_relations.txt')
 
-    # import pdb; pdb.set_trace()
-
     ### initializing the relations dictionary with the relations from the ontology
     for rel in relations_list:
         relations_dict[rel]         =    len(relations_dict)
+
+    print(f'Loaded {len(relations_list)} relations from the relations list file')
     
     class_set                       =    set(class_list)   
 
@@ -132,21 +132,41 @@ def create_grailqa():
             
         rev_relations[reverse_properties[rel]] = rel
         rev_relations[rel] = reverse_properties[rel]
+    
+    print(f'Original number of reverse relations: {len(rev_relations)}')
+
+    ''''
+    Actually making sure the relations list are unique
+    '''
 
     ### adding inverse relations to the relations dictionary for the ones which are not already present ###
     for rel in relations_list:
-        if rel not in reverse_properties:
+        if rel == 'self_loop':
+            continue
+        if rel not in rev_relations:
             rev_relations[rel]          = f'rev_{rel}'
             rev_relations[f'rev_{rel}'] = rel
     
-    print(f'Loaded {len(reverse_properties)} inverse relations')
+    print(f'Updated number of reverse relations: {len(rev_relations)}')
     
     for rel in rev_relations:
         if rel not in relations_dict:
             relations_dict[rel]                 = len(relations_dict)
-            relations_dict[rev_relations[rel]]  = len(relations_dict)
+            # relations_dict[rev_relations[rel]]  = len(relations_dict)
 
     print(f'Total number of relations (including inverse relations): {len(relations_dict)}')
+
+    rel2id = {}
+    id2rel = {}
+
+    for rel in relations_dict:
+        rel2id[rel] = relations_dict[rel]
+        id2rel[relations_dict[rel]] = rel
+    
+    print(f'Length of rel2id dictionary: {len(rel2id)}')
+    print(f'Length of id2rel dictionary: {len(id2rel)}')
+
+    # import pdb; pdb.set_trace()
 
     for line in open(fb_tuples_file, 'r'):
         head, rel, tail                = line.strip().split('\t')
@@ -437,13 +457,49 @@ def stats_dataset():
         print(Counter(sorted(stats_dict[split]["num_kg_tuples"])))
     
 
+def sanity_check():
+
+    with open(f'{args.data_dir}/{args.dataset}/KBQA_walklet_edge_label_768_dim_data.dill', 'rb') as f:
+        KBQA_dict = dill.load(f)
+    
+    relations_dict = json.load(open(f'{args.data_dir}/{args.dataset}/relations_dict.json', 'r'))
+
+    print(f'Loaded {len(relations_dict)}')
+
+    bad_counts = {'train': 0, 'dev': 0}
+    for split in ['train', 'dev']:
+        for elem in tqdm(KBQA_dict[split]):
+
+            kg_tuples = elem['kg_tuples']
+            edge_type = elem['node_data']['edge_type']
+
+            for kg_head, kg_rel, kg_tail in kg_tuples:
+                if kg_rel not in relations_dict:
+                    print(f'Error: Relation {kg_rel} not found in relations_dict for {elem["ID"]}')
+                    bad_counts[split] += 1
+                    # import pdb; pdb.set_trace()
+            
+            edge_type_set = set(edge_type.tolist())
+            max_edge_number = max(edge_type_set)
+
+            try:
+                assert max_edge_number < len(relations_dict)
+            except Exception as e:
+                # import pdb; pdb.set_trace()
+                print(f'Max edge number {max_edge_number} is greater than the number of relations {len(relations_dict)} for {elem["ID"]}')
+                bad_counts[split] += 1
 
 
+    
+        print(f'Bad counts for {args.dataset} {split}: {bad_counts[split]}')
 
+    
+
+                
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--data_dir', type=str, default='../../isomorphism_prediction/data')
+    parser.add_argument('--data_dir', type=str, default='../../isomorphism_pred_KBQA/data')
     parser.add_argument('--dataset',  type=str, default='grailqa')
     parser.add_argument('--step',     type=str, required=True)
     parser.add_argument('--top_k',    type=int, default=10, help='Top-K classes and relations to consider for schema linking')
@@ -462,7 +518,10 @@ if __name__ == '__main__':
     if args.step == 'filter':
         if args.dataset == 'grailqa':
             filter_grailqa()
-            
+
+    if args.step == 'sanity':
+        sanity_check()
+
     #     elif args.dataset == 'cwq':
     #         create_cwq_KBQA()
         
