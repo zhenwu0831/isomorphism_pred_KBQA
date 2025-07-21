@@ -35,6 +35,7 @@ from utils.evaluation import hits_at_k_text, hits_at_k_graph, compute_hits_at_k,
 from utils.parse_sql import lisp_to_sparql
 from utils.early_stopping import EarlyStopping
 from dataloader import get_dataloader
+from dataloader_with_prefix import get_dataloader as get_dataloader_prefix
 
 from models.text_model import (
     BertMultiTaskModel,
@@ -50,6 +51,79 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils import checkpoint
 
 from bitsandbytes.optim import Adam8bit
+
+def train_epoch_text_prefix(model, dataloader, optimizer, tokenizer, device, args, epoch=0):
+    model.train()
+    total_loss = 0.0
+    num_batches = 0
+
+    for step, batch in enumerate(tqdm(dataloader, desc="Training", leave=False), start=0):
+        input_ids = batch["text_view"]["input_ids"].to(device)
+        attention_mask = batch["text_view"]["attention_mask"].to(device)
+        labels = batch["text_view"]["labels"].to(device)
+
+        optimizer.zero_grad()
+        outputs, _ = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=labels
+        )
+        loss = outputs['gen_outputs'].loss
+        loss.backward()
+        optimizer.step()
+
+        total_loss += loss.item()
+        num_batches += 1
+
+        wandb.log({
+            "train/loss": loss.item(),
+            "step": step + epoch * len(dataloader)
+        })
+
+    avg_loss = total_loss / max(1, num_batches)
+    wandb.log({"train/epoch_loss": avg_loss, "epoch": epoch})
+    return avg_loss
+
+from sklearn.metrics import f1_score
+
+def eval_epoch_text_prefix(model, dataloader, tokenizer, device, args, epoch=0):
+    model.eval()
+
+    gen_correct, gen_total = 0, 0
+    all_iso_preds = []
+    all_iso_gold = []
+
+    with torch.no_grad():
+        for step, batch in enumerate(tqdm(dataloader, desc="Evaluating", leave=False), start=0):
+            input_ids = batch["text_view"]["input_ids"].to(device)
+            attention_mask = batch["text_view"]["attention_mask"].to(device)
+
+            preds = model.generate(input_ids=input_ids, attention_mask=attention_mask)
+            pred_texts = tokenizer.batch_decode(preds, skip_special_tokens=True)
+
+            task_types = batch["text_view"]["task_type"]
+            gold_sexps_raw = batch["text_view"].get("gold_sexp_raw", [None] * len(task_types))
+            gold_iso = batch["text_view"].get("gold_iso", [None] * len(task_types))
+
+            for i, task in enumerate(task_types):
+                pred = pred_texts[i].strip()
+                if task == "generation":
+                    gold = gold_sexps_raw[i].strip()
+                    gen_correct += compute_exact_match(pred, gold)
+                    gen_total += 1
+                elif task == "iso":
+                    all_iso_preds.append(pred)
+                    all_iso_gold.append(gold_iso[i].strip())
+
+    metrics = {
+        "exact_match": gen_correct / max(1, gen_total),
+        "iso_f1": f1_score(all_iso_gold, all_iso_preds, average="macro", zero_division=0)
+    }
+
+    wandb.log({f"eval/{k}": v for k, v in metrics.items()}, step=epoch)
+    metrics["epoch"] = epoch  # optional: include in return for tracking
+
+    return metrics
 
 def train_epoch_text(
     args, model, loader, optimizer, scheduler,
@@ -272,7 +346,15 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
         # scaler.step(optimizer)
         # scaler.update()
 
+        wandb.log({
+            "train/ranking_loss": l_rank.item() if "ranking" in model.modes else None,
+            "train/iso_loss":     l_iso.item()    if "iso"     in model.modes else None,
+        })
+
         total_loss += loss.item()
+
+        # clear cache 
+        torch.cuda.empty_cache()
 
     return total_loss / len(loader)
 
@@ -286,12 +368,24 @@ def eval_epoch_graph(model, loader, device):
         for batch in tqdm(loader, desc="Evaluating (graph)", leave=False):
             gv = batch["graph_view"]
 
+            # gdata = gv["gnn_data"]
+            # et = gdata.edge_type
+            # ei = gdata.edge_index
+
+            # print(f"  ▶ edge_type dtype={et.dtype}   min={int(et.min())}   max={int(et.max())}")
+            # print(f"  ▶ expected num_rels = {model.params.num_rels}")
+            # print(f"  ▶ edge_index shape = {tuple(ei.shape)}   (should be [2, E])")
+
+
             for k, v in gv.items():
                 # we know gnn_data is a torch_geometric Batch
                 if hasattr(v, "to"):
                     gv[k] = v.to(device)
 
-            out, _ = model(gv)
+            try:
+                out, _ = model(gv)
+            except Exception as e:
+                import pdb; pdb.set_trace()
 
             # ranking hits@k over each graph
             if "ranking" in model.modes:
@@ -340,6 +434,13 @@ def train_epoch_cod(model, loader, optimizer, device):
         loss = cl + nc
         loss.backward()
         optimizer.step()
+
+        wandb.log({
+            "train/iso_loss": cl.item(),
+            "train/contrastive_loss": nc.item(),
+            "train/loss": loss.item(),
+        })
+
         total_loss += loss.item()
     return total_loss / len(loader)
 
@@ -360,7 +461,7 @@ def eval_epoch_cod(model, loader, device):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_type", choices=["text","graph","cod"], required=True)
+    parser.add_argument("--model_type", choices=["text","graph","cod","text_multi"], required=True)
     parser.add_argument("--backbone",    choices=["bert","t5","gpt2"], default="t5")
     parser.add_argument("--tasks",       type=str, default="iso")
     parser.add_argument("--weights",     type=str, default=None)
@@ -378,6 +479,8 @@ def main():
     parser.add_argument("--batch_size",  type=int, default=16)
     parser.add_argument("--epochs",      type=int, default=10)
     parser.add_argument("--lr",          type=float, default=5e-5)
+    parser.add_argument("--lr_text", type=float, default=5e-5)
+    parser.add_argument("--lr_graph", type=float, default=8e-5)
     parser.add_argument(
         "--scheduler",
         choices=["none", "linear", "step", "cosine", "cosine_restart", "reduce_on_plateau", "onecycle"],
@@ -476,21 +579,36 @@ def main():
     else:
         tokenizer.add_tokens(list(special_tokens.values()))
 
-    train_loader = get_dataloader(
+    get_loader = get_dataloader_prefix if args.model_type == "text_multi" else get_dataloader
+
+    train_loader = get_loader(
         train, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=True
     )
-    dev_loader = get_dataloader(
+    dev_loader = get_loader(
         dev, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=False
     )
-    test_loader = get_dataloader(
+    test_loader = get_loader(
         test, args, tokenizer, modes=tasks, convert_entities=args.convert_entities,
         global_label_map=label_map,
         batch_size=args.batch_size, shuffle=False
     )
+
+    # all_lengths = []
+    # for batch in train_loader:
+    #     # batch["text_view"]["attention_mask"] is (B, L)
+    #     lengths = batch["text_view"]["attention_mask"].sum(dim=1).tolist()
+    #     all_lengths.extend(lengths)
+
+    # print(f"Dataset size:            {len(all_lengths)} sequences")
+    # print(f"Max un-padded length:   {max(all_lengths)}")
+    # print(f"Min un-padded length:   {min(all_lengths)}")
+    # print(f"Average un-padded length: {sum(all_lengths)/len(all_lengths):.1f}")
+
+    print(args.model_type, "tasks:", tasks)
 
     # --- model ---
     if args.model_type == "text":
@@ -506,6 +624,15 @@ def main():
     elif args.model_type == "graph":
         model = GraphMultiTaskModel(args, modes=tasks)
         # model.text_encoder.gradient_checkpointing_enable()
+    elif args.model_type == "text_multi":
+        if args.backbone == "bert":
+            model = BertMultiTaskModel(args, tokenizer, modes=["generation"])
+        elif args.backbone == "t5":
+            model = T5MultiTaskModel(args, tokenizer, modes=["generation"])
+        else:
+            model = GPT2MultiTaskModel(args, tokenizer, modes=["generation"])
+        model.backbone.resize_token_embeddings(len(tokenizer))
+        # model.backbone.gradient_checkpointing_enable()
 
     else:  # CoD
         if args.backbone == "bert":
@@ -521,7 +648,37 @@ def main():
     model.to(device)
     trainable_params = [p for p in model.parameters() if p.requires_grad]
 
-    optimizer = Adam8bit(trainable_params, lr=args.lr)
+    # optimizer = Adam8bit(trainable_params, lr=args.lr)
+    # optimizer = AdamW(trainable_params, lr=args.lr)
+    if args.model_type == "cod" and args.gnn_model == "gcn":
+        optimizer = torch.optim.AdamW([
+            {
+                "params": model.text_model.parameters(),
+                "lr": args.lr_text
+            },
+            {
+                "params": model.text_head.parameters(),
+                "lr": args.lr_text
+            },
+            {
+                "params": model.graph_model.parameters(),
+                "lr": args.lr_graph
+            },
+            {
+                "params": model.gcn_head.parameters(),
+                "lr": args.lr_graph
+            },
+            {
+                "params": model.classifier.parameters(),
+                "lr": args.lr_graph   # tie to graph branch for classification
+            }
+        ])
+        wandb.config.update({
+            "lr_text": args.lr_text,
+            "lr_graph": args.lr_graph
+        })
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     # if args.debug:
     #     optimizer = Adam8bit(trainable_params, lr=args.lr)
@@ -591,6 +748,13 @@ def main():
         elif args.model_type == "graph":
             train_loss = train_epoch_graph(model, train_loader, optimizer, weights, device)
             metrics = eval_epoch_graph(model, dev_loader, device)
+        elif args.model_type == "text_multi":
+            train_loss = train_epoch_text_prefix(
+                model, train_loader, optimizer, tokenizer, device, args, epoch=ep
+            )
+            metrics = eval_epoch_text_prefix(
+                model, dev_loader, tokenizer, device, args, epoch=ep
+            )
         else:
             train_loss, global_step = train_epoch_text(
                 args, model, train_loader,
@@ -599,10 +763,10 @@ def main():
             )
             metrics = eval_epoch_text(args, model, dev_loader, device, tasks, tokenizer)
 
-        primary = ("hits@k_graph" if args.model_type=="graph"
+        primary = ("iso_f1_graph" if args.model_type=="graph"
                     else "iso_f1" if args.model_type=="cod"
                     else "hits@k_ranking" if "ranking" in tasks
-                    else "exact_match" if "generation" in tasks
+                    else "exact_match" if "generation" in tasks or "text_multi" in args.model_type
                     else "iso_f1")
 
         # epoch‐wise scheduler stepping
@@ -625,7 +789,7 @@ def main():
         primary_val = metrics.get(primary, 0.0)
         if primary_val > best_val:
             best_val = primary_val
-            torch.save(model.state_dict(), best_ckpt)
+            torch.save(model, best_ckpt)
             print(f"↳ saved best {primary}={best_val:.4f}")
 
         stopper(primary_val)
@@ -634,12 +798,17 @@ def main():
             break
 
     # --- final evaluation + save preds ---
-    model.load_state_dict(torch.load(best_ckpt))
+    print("→ loading checkpoint from", best_ckpt, 
+      "exists?", os.path.exists(best_ckpt), 
+      "size=", os.path.getsize(best_ckpt))
+    model = torch.load(best_ckpt, weights_only=False)
     model.to(device)
     if args.model_type == "cod":
         test_metrics = eval_epoch_cod(model, test_loader, device)
     elif args.model_type == "graph":
         test_metrics = eval_epoch_graph(model, test_loader, device)
+    elif args.model_type == "text_multi":
+        test_metrics = eval_epoch_text_prefix(model, test_loader, tokenizer, device, args)
     else:
         test_metrics = eval_epoch_text(args, model, test_loader, device, tasks, tokenizer)
 
@@ -651,61 +820,105 @@ def main():
     model.eval()
     with torch.no_grad():
         for batch in tqdm(test_loader, desc="Predicting", leave=False):
-            tv     = batch["text_view"]
-            IDs    = tv["ID"]
-            in_ids = tv["input_ids"].to(device)
-            attn   = tv["attention_mask"].to(device)
-            spans  = tv.get("entity_spans", None)
+            IDs = batch["text_view"]["ID"]
+            recs = [{"ID": qid} for qid in IDs]
 
-            out = {}
             if args.model_type == "graph":
                 out, _ = model(batch["graph_view"])
-            else:
-                do_classify = any(t in tasks for t in ("iso", "ranking"))
-                if do_classify:
+                if "ranking" in tasks:
+                    scores      = out["entity_scores"].cpu()                 # (N_total,)
+                    gdata       = batch["graph_view"]["gnn_data"]
+                    batch_idx   = gdata.batch.cpu()                        
+                    answer_mask = gdata.answer_x.cpu().squeeze(-1).bool() 
+
+                    batch_size = int(batch_idx.max().item()) + 1
+                    for gid in range(batch_size):
+                        node_mask = (batch_idx == gid)
+                        sc        = scores[node_mask]
+                        gm        = answer_mask[node_mask]
+                        k         = int(gm.sum().item())
+                        topk      = torch.argsort(sc, descending=True)[:k].tolist()
+                        recs[gid]["rank_pred"] = topk
+            elif args.model_type == "text_multi":
+                questions  = batch["text_view"]["question"]
+                task_types = batch["text_view"]["task_type"]
+                in_ids     = batch["text_view"]["input_ids"].to(device)
+                attn       = batch["text_view"]["attention_mask"].to(device)
+
+                gens = model.generate(
+                    input_ids=in_ids,
+                    attention_mask=attn,
+                    max_length=args.generation_max_length,
+                    num_beams=args.num_beams
+                )
+                decoded = tokenizer.batch_decode(gens, skip_special_tokens=True)
+
+                gold_sexps = batch["text_view"].get("gold_sexp_raw", [None] * len(task_types))
+                gold_isos  = batch["text_view"].get("gold_iso", [None] * len(task_types))
+
+                for i, r in enumerate(recs):
+                    beam_preds = decoded[i * args.num_beams: (i + 1) * args.num_beams]
+                    r["gen_pred"] = beam_preds
+
+                    if task_types[i] == "generation":
+                        r["gold"] = gold_sexps[i]
+                    elif task_types[i] == "iso":
+                        r["gold"] = gold_isos[i]
+
+            else:  # text or cod
+                tv     = batch["text_view"]
+                in_ids = tv["input_ids"].to(device)
+                attn   = tv["attention_mask"].to(device)
+                spans  = tv.get("entity_spans", None)
+
+                if args.model_type == "cod":
+                    logits, _, _ = model(batch)
+                    out = {"iso_logits": logits}
+                else:
                     fw = {"input_ids": in_ids, "attention_mask": attn}
                     if "ranking" in tasks:
                         fw["entity_spans"] = spans
                     out, _ = model(**fw)
 
-            iso_p = None
-            if "iso" in tasks:
-                iso_p = out["iso_logits"].cpu().tolist()
+                if "iso" in tasks:
+                    iso_logits = out["iso_logits"].cpu().tolist()
+                    recs = [
+                        { **r, "iso_pred": logit_vec }
+                        for r, logit_vec in zip(recs, iso_logits)
+                    ]
 
-            rank_p = None
-            if "ranking" in tasks:
-                scores = out["entity_scores"].cpu()
-                labs, _ = pad_entity_labels(tv["entity_labels"], device)
-                rank_p = [
-                    torch.argsort(scores[i], descending=True)[: int(labs[i].sum())]
-                        .tolist()
-                    for i in range(scores.size(0))
-                ]
+                if "ranking" in tasks and args.model_type != "cod":  # cod doesn’t do ranking here
+                    scores, mask = pad_entity_labels(tv["entity_labels"], device)
+                    scores = out["entity_scores"].cpu()
+                    recs = [
+                        {
+                            **r,
+                            "rank_pred": torch.argsort(scores[i][mask[i].bool()], descending=True).tolist()
+                        }
+                        for i, r in enumerate(recs)
+                    ]
 
-            gen_p = None
-            if "generation" in tasks:
-                beams = args.num_beams
-                gens = model.generate(
-                    input_ids=in_ids,
-                    attention_mask=attn,
-                    max_length=args.generation_max_length,
-                    num_beams=beams,
-                )
-                dec = tokenizer.batch_decode(gens, skip_special_tokens=True)
-                gen_p = [ dec[i*beams:(i+1)*beams] for i in range(len(IDs)) ]
+                if "generation" in tasks and args.model_type != "cod":  # cod doesn’t do generation here
+                    beams = args.num_beams
+                    gens  = model.generate(
+                        input_ids=in_ids,
+                        attention_mask=attn,
+                        max_length=args.generation_max_length,
+                        num_beams=beams
+                    )
+                    decoded = tokenizer.batch_decode(gens, skip_special_tokens=True)
+                    for i, r in enumerate(recs):
+                        r["gen_pred"] = decoded[i*beams : (i+1)*beams]
 
-            for i, qid in enumerate(IDs):
-                rec = {"ID": qid}
-                if iso_p  is not None: rec["iso_pred" ] = iso_p[i]
-                if rank_p is not None: rec["rank_pred"] = rank_p[i]
-                if gen_p  is not None: rec["gen_pred" ] = gen_p[i]
-                predictions.append(rec)
+            predictions.extend(recs)
 
+    # Write out metrics + predictions
     out = {"metrics": test_metrics, "predictions": predictions}
     with open(os.path.join(args.output_dir, "test_predictions.json"), "w") as wf:
         json.dump(out, wf, indent=2)
+
     print("Test metrics:", test_metrics)
-    wandb.log({f"test_{k}": v for k,v in test_metrics.items()})
+    wandb.log({f"test_{k}": v for k, v in test_metrics.items()})
     wandb.finish()
 
 

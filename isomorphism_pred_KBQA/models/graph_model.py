@@ -30,6 +30,7 @@ class GNNConv(nn.Module):
     """
     def __init__(self, gnn_model: str, in_dim: int, out_dim: int, num_rels: int):
         super().__init__()
+        self.gnn_model = gnn_model
         if gnn_model == 'rgcn':
             self.gnn = FastRGCNConv(in_channels=in_dim, out_channels=out_dim, num_relations=num_rels)
         elif gnn_model == 'rgat':
@@ -42,7 +43,10 @@ class GNNConv(nn.Module):
     def forward(self, inp):
         x, edge_index, edge_type = inp
         # FastRGCNConv & RGATConv expect edge_type; GCNConv ignores it
-        return self.gnn(x, edge_index, edge_type), edge_index, edge_type
+        if self.gnn_model == 'gcn':
+            return self.gnn(x, edge_index), edge_index, edge_type
+        else:
+            return self.gnn(x, edge_index, edge_type), edge_index, edge_type
 
 
 class DeepNet(nn.Module):
