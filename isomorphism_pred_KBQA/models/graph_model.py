@@ -174,6 +174,8 @@ class GraphMultiTaskModel(nn.Module):
         g_out = self.gnn((g_in, gdata.edge_index, gdata.edge_type))
         g_norm = self.layer_norm(g_out)         # (N, hidden_dim)
 
+        assert len(gdata.batch) > 0
+
         graph_representation = self.pooling(g_norm, gdata.batch)  # (B, hidden_dim)
         # -- isomorphism classification --
         if "iso" in self.modes:
