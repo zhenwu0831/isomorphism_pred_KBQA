@@ -48,6 +48,8 @@ from models.cod import CoDModel
 # from accelerate import Accelerator
 from torch.cuda.amp import autocast, GradScaler
 
+scaler = GradScaler()
+
 from torch.utils import checkpoint
 
 from bitsandbytes.optim import Adam8bit
@@ -60,62 +62,61 @@ def train_epoch_text(
     total_loss = 0.0
 
     for batch in tqdm(loader, desc="Training", leave=False):
-        try:
-            optimizer.zero_grad()
-            tv = batch["text_view"]
-            in_ids = tv["input_ids"].to(device)
-            attn   = tv["attention_mask"].to(device)
+        
+        optimizer.zero_grad()
+        tv = batch["text_view"]
+        in_ids = tv["input_ids"].to(device)
+        attn   = tv["attention_mask"].to(device)
 
-            gen_l = tv.get("labels")
-            iso_l = tv.get("iso_label")
-            spans= tv.get("entity_spans")
-            labs = tv.get("entity_labels")
+        gen_l = tv.get("labels")
+        iso_l = tv.get("iso_label")
+        spans= tv.get("entity_spans")
+        labs = tv.get("entity_labels")
 
-            kwargs = {"input_ids": in_ids, "attention_mask": attn}
-            if "generation" in tasks:
-                kwargs["labels"] = gen_l.to(device)
-            if "ranking" in tasks:
-                kwargs["entity_spans"] = spans
+        kwargs = {"input_ids": in_ids, "attention_mask": attn}
+        if "generation" in tasks:
+            kwargs["labels"] = gen_l.to(device)
+        if "ranking" in tasks:
+            kwargs["entity_spans"] = spans
 
-            out, _ = model(**kwargs)
-            loss = torch.tensor(0.0, device=device)
+        out, _ = model(**kwargs)
+        loss = torch.tensor(0.0, device=device)
 
-            gen_loss, iso_loss, ranking_loss = None, None, None
+        gen_loss, iso_loss, ranking_loss = None, None, None
 
-            if "generation" in tasks:
-                gen_loss = out["gen_outputs"].loss
-                loss += weights["generation"] * gen_loss
-            if "iso" in tasks:
-                iso_loss = F.cross_entropy(out["iso_logits"], iso_l.to(device))
-                loss += weights["iso"] * iso_loss
-            if "ranking" in tasks:
-                scores, mask = pad_entity_labels(labs, device)
-                ranking_loss = F.binary_cross_entropy(out["entity_scores"] * mask, scores)
-                loss += weights["ranking"] * ranking_loss
+        if "generation" in tasks:
+            gen_loss = out["gen_outputs"].loss
+            loss += weights["generation"] * gen_loss
+        elif "iso" in tasks:
+            iso_loss = F.cross_entropy(out["iso_logits"], iso_l.to(device))
+            loss += weights["iso"] * iso_loss
+        elif "ranking" in tasks:
+            scores, mask = pad_entity_labels(labs, device)
+            ranking_loss = F.binary_cross_entropy(out["entity_scores"] * mask, scores)
+            loss += weights["ranking"] * ranking_loss
 
-            loss.backward()
-            optimizer.step()
+        loss.backward()
+        optimizer.step()
 
-            if args.scheduler is not None and args.scheduler in ("linear", "onecycle"):
-                scheduler.step()
+        if args.scheduler is not None and args.scheduler in ("linear", "onecycle"):
+            scheduler.step()
 
-            global_step += 1
+        global_step += 1
 
-            if scheduler is not None and hasattr(scheduler, "get_last_lr"):
-                current_lr = scheduler.get_last_lr()[0]
-            else:
-                current_lr = optimizer.param_groups[0]["lr"]
+        if scheduler is not None and hasattr(scheduler, "get_last_lr"):
+            current_lr = scheduler.get_last_lr()[0]
+        else:
+            current_lr = optimizer.param_groups[0]["lr"]
 
-            wandb.log({
-                "train/generation_loss": gen_loss.item()     if gen_loss     is not None else None,
-                "train/iso_loss":        iso_loss.item()     if iso_loss     is not None else None,
-                "train/ranking_loss":    ranking_loss.item() if ranking_loss is not None else None,
-                "train/lr":              current_lr,
-            }, step=global_step)
+        wandb.log({
+            "train/generation_loss": gen_loss.item()     if gen_loss     is not None else None,
+            "train/iso_loss":        iso_loss.item()     if iso_loss     is not None else None,
+            "train/ranking_loss":    ranking_loss.item() if ranking_loss is not None else None,
+            "train/lr":              current_lr,
+        }, step=global_step)
 
-            total_loss += loss.item()
-        except Exception as e:
-            import pdb; pdb.set_trace()
+        total_loss += loss.item()
+    
 
     return total_loss / len(loader), global_step
 
@@ -271,6 +272,9 @@ def train_epoch_graph(model, loader, optimizer, weights, device):
         # except:
         #     import pdb; pdb.set_trace()
 
+        # scaler.scale(loss).backward()
+        # scaler.step(optimizer)
+        # scaler.update()
 
         # scaler.scale(loss).backward()
         # scaler.step(optimizer)
@@ -401,7 +405,7 @@ def main():
     parser.add_argument("--pct_start",    type=float, default=0.3,
                         help="Warmup fraction for OneCycleLR")
 
-    parser.add_argument("--gnn_model",    choices=["rgcn","rgat","gcn"], default="rgcn")
+    parser.add_argument("--gnn_model",    choices=["rgcn","rgat","gcn","gat"], default="rgcn")
     parser.add_argument("--gnn_depth",    type=int, default=2)
     parser.add_argument("--node_emb_dim", type=int, default=768)
     parser.add_argument("--hidden_dim",  type=int, default=768)
@@ -444,8 +448,8 @@ def main():
         train, dev, test = data["train"], data["dev"], data["test"]
     else:
         if args.debug:
-            train = data["train"][:2100]
-            dev = data["train"][2100:3000]
+            train = data["train"][:200]
+            dev = data["train"][200:300]
         else:
             train = data["train"][:int(len(data["train"])*0.7)]
             dev = data["train"][int(len(data["train"])*0.7):]
@@ -646,7 +650,9 @@ def main():
             break
 
     # --- final evaluation + save preds ---
-    model.load_state_dict(torch.load(best_ckpt))
+    best_state_dict = torch.load(best_ckpt, weights_only=False)
+    model.load_state_dict(best_state_dict)
+    
     model.to(device)
     if args.model_type == "cod":
         test_metrics = eval_epoch_cod(model, test_loader, device)
@@ -660,7 +666,7 @@ def main():
         wandb.log({f"test_{k}": v})
 
     wandb.finish()
-    exit()
+    # exit()
 
 
     predictions = []

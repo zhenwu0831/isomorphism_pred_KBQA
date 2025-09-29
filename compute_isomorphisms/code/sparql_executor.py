@@ -4,14 +4,20 @@ import json
 import urllib
 from pathlib import Path
 from tqdm import tqdm
+from pprint import pprint
 
 sparql = SPARQLWrapper("http://localhost:3001/sparql")
 sparql.setReturnFormat(JSON)
 
 path = str(Path(__file__).parent.absolute())
 
-with open('../../ontology/fb_roles', 'r') as f:
+# /data/shire/projects/GenQA/ISOKBQA/ontology
+# with open('../../ontology/fb_roles', 'r') as f:
+#     contents = f.readlines()
+
+with open('/data/shire/projects/GenQA/ISOKBQA/ontology/fb_roles', 'r') as f:
     contents = f.readlines()
+
 
 roles = set()
 for line in contents:
@@ -683,3 +689,32 @@ def get_label(entity: str) -> str:
         return None
 
 
+
+def get_custom_query():
+
+    # query= """SELECT ?spouse_name WHERE {
+    # <http://rdf.freebase.com/ns/m.02pbp9> <http://rdf.freebase.com/ns/people.person.spouse_s> ?marriage .
+    # ?marriage <http://rdf.freebase.com/ns/people.marriage.spouse> ?spouse .
+    # ?spouse <http://rdf.freebase.com/ns/type.object.name> ?spouse_name .
+    # }
+    # """
+
+    # sparql.setQuery(query)
+    # results = sparql.query().convert()
+
+    
+    # pprint(results)
+
+    query= ''' SELECT ?producer_name WHERE {
+    <http://rdf.freebase.com/ns/m.0zbfphz> <http://rdf.freebase.com/ns/theater.theater_production.producer> ?producer .
+    ?producer <http://rdf.freebase.com/ns/type.object.name> ?producer_name .
+    }'''
+
+    sparql.setQuery(query)
+    results = sparql.query().convert()
+    pprint(results)
+
+    # m.0zbfphz
+
+
+get_custom_query()

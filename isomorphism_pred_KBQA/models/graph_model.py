@@ -2,7 +2,7 @@
 
 import torch
 import torch.nn as nn
-from torch_geometric.nn import FastRGCNConv, RGATConv, GCNConv, global_max_pool, global_mean_pool
+from torch_geometric.nn import FastRGCNConv, RGATConv, GCNConv, global_max_pool, global_mean_pool, GATConv
 from torch_geometric.data import Batch
 from transformers import AutoModel, T5EncoderModel
 
@@ -37,6 +37,8 @@ class GNNConv(nn.Module):
             self.gnn = RGATConv(in_channels=in_dim, out_channels=out_dim, num_relations=num_rels)
         elif gnn_model == 'gcn':
             self.gnn = GCNConv(in_channels=in_dim, out_channels=out_dim)
+        elif gnn_model == 'gat':
+            self.gnn = GATConv(in_channels=in_dim, out_channels=out_dim)
         else:
             raise ValueError(f"Unknown GNN model '{gnn_model}'")
 
@@ -44,6 +46,8 @@ class GNNConv(nn.Module):
         x, edge_index, edge_type = inp
         # FastRGCNConv & RGATConv expect edge_type; GCNConv ignores it
         if self.gnn_model == 'gcn':
+            return self.gnn(x, edge_index), edge_index, edge_type
+        elif self.gnn_model == 'gat':
             return self.gnn(x, edge_index), edge_index, edge_type
         else:
             return self.gnn(x, edge_index, edge_type), edge_index, edge_type

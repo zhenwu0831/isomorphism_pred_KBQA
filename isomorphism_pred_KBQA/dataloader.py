@@ -264,3 +264,175 @@ def get_dataloader(
         ds, batch_size=batch_size, shuffle=shuffle,
         collate_fn=collate_fn, num_workers=num_workers, pin_memory=True
     )
+
+
+
+
+class T5MultiTaskDataset(Dataset):
+    def __init__( 
+        self,
+        raw_data: List[Dict],
+        params: Any,
+        tokenizer: PreTrainedTokenizer,
+        modes: Sequence[str],
+        convert_entities: bool = False,
+        global_label_map: Optional[Dict[str, int]] = None
+    ):
+        # self.data = data
+        self.params = params
+        self.tokenizer = tokenizer
+        self.samples = self._preprocess(raw_data)
+        # 2) tokenize everything up-front
+        self.samples = self._tokenize_all()
+
+    def __len__(self):
+        return len(self.samples)
+    
+    def _preprocess(self, data) -> List[Dict]:
+        """
+        Build text_in and struct_in but do not drop samples unless missing necessary fields for _any_ enabled mode.
+        """
+        out = []
+        for e in data:
+            # import pdb; pdb.set_trace()
+            if not e.get("question") or not e.get("kg_tuples") or not e.get("s_expression"):
+                continue
+            
+            q = e["question"].strip()
+            if e.get("entities"):
+                ents = " ".join(f"{subj}: {obj}" for subj, obj in e["entities"])
+            elif e.get("head_entities"):
+                ents = " | ".join(f"{subj}: {obj}: {name}" for subj, obj, name in e["head_entities"])
+            else:
+                print(f"Warning: No entities in {e.get('ID', e.get('id'))}, skipping.")
+            kg = " | ".join(" ".join(t) for t in e["kg_tuples"])
+            e["text_in"] = q
+            e["struct_in"] = f"{ents} | {kg}"
+            out.append(deepcopy(e))
+            
+        return out
+    
+
+    def _tokenize_all(self) -> List[Dict]:
+
+        toks        = []
+        # return {
+        #     "input_ids": input_enc.input_ids.squeeze(0),
+        #     "attention_mask": input_enc.attention_mask.squeeze(0),
+        #     "labels": target_enc.input_ids.squeeze(0)
+        # }
+        prefix_dict = {
+            'iso': 'classify',
+            'lf' : 'generate'
+        }
+        for e in tqdm(self.samples, desc="Tokenizing unified dataset"):
+
+            # import pdb; pdb.set_trace()
+            struct   = e["struct_in"]
+            
+            for prefix in ['iso', 'lf']:
+
+                curr_dict = {}
+
+                seq = f"{prefix_dict[prefix]}: Input question: {e['text_in']} ; Structured knowledge: {struct}"
+
+                tkn = self.tokenizer(
+                    seq,
+                    padding="max_length",
+                    truncation=True,
+                    max_length=self.params.input_max_length
+                )
+
+                curr_dict["ID"]             = e.get("ID", e.get("id"))
+                curr_dict["input_ids"]      = torch.LongTensor(tkn["input_ids"])
+                curr_dict["attention_mask"] = torch.LongTensor(tkn["attention_mask"])
+                curr_dict["question"]       = e["question"]
+                curr_dict['seq']            = seq
+                curr_dict["gold_sexp"]      = e["s_expression"]
+                curr_dict['isomorphism']    = e['isomorphism']
+                curr_dict['prefix']         = prefix
+
+                
+                if prefix == 'lf':
+
+                    sexp_raw = e["s_expression"]
+                    sexp     = sexp_raw
+                    
+                    t2 = self.tokenizer(
+                        sexp,
+                        padding="max_length",
+                        truncation=True,
+                        max_length=self.params.generation_max_length
+                    )
+
+                    labels = torch.LongTensor(t2["input_ids"])
+                    labels[labels == self.tokenizer.pad_token_id] = -100
+                    curr_dict["labels"] = labels
+                    
+                
+                if prefix == 'iso':
+                    
+                    idx     = e['isomorphism']
+
+                    t2 = self.tokenizer(
+                        idx,
+                        padding="max_length",
+                        truncation=True,
+                        max_length=self.params.generation_max_length
+                    )
+
+                    labels = torch.LongTensor(t2["input_ids"])
+                    labels[labels == self.tokenizer.pad_token_id] = -100
+                    curr_dict["labels"] = labels
+
+                toks.append(curr_dict)
+       
+        return toks
+
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        return self.samples[idx]
+
+    
+
+
+def collate_T5_fn(samples: List[Dict[str, Any]]) -> Dict[str, Any]:
+    # batch = {"text_view": {}, "graph_view": {}, "node_dict": []}
+    # tvs = [s["text_view"] for s in samples]
+    batch = {}
+
+    batch["ID"] = [t["ID"] for t in samples]
+    batch["question"] = [t["question"] for t in samples]
+    batch['seq'] = [t['seq'] for t in samples]
+    batch["input_ids"] = pad_sequence([t["input_ids"] for t in samples], batch_first=True)
+    batch["attention_mask"] = pad_sequence([t["attention_mask"] for t in samples], batch_first=True)
+    batch['labels'] = pad_sequence([t["labels"] for t in samples], batch_first=True, padding_value=-100)
+    batch['gold_sexp'] = [t["gold_sexp"] for t in samples]
+    batch['isomorphism'] = [t["isomorphism"] for t in samples]
+    batch['prefix'] = [t["prefix"] for t in samples]
+
+    return batch
+
+
+def get_T5_dataloader(
+    raw_data: List[Dict],
+    params: Any,
+    tokenizer: PreTrainedTokenizer,
+    modes: Sequence[str],
+    convert_entities: bool = False,
+    global_label_map: Optional[Dict[str, int]] = None,
+    batch_size: int = 16,
+    shuffle: bool = True,
+    num_workers: int = 2
+) -> DataLoader:
+    ds = T5MultiTaskDataset(
+        raw_data, params, tokenizer,
+        modes=modes,
+        convert_entities=convert_entities,
+        global_label_map=global_label_map
+    )
+    return DataLoader(
+        ds, batch_size=batch_size, shuffle=shuffle,
+        collate_fn=collate_T5_fn, num_workers=num_workers, pin_memory=True
+    )
+

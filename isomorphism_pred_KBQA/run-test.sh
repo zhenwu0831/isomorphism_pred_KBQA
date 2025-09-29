@@ -4,9 +4,9 @@
 # export CUDA_LAUNCH_BLOCKING=1
 
 # ─── Defaults ──────────────────────────────────────────────────────────────────
-MODEL_TYPE="graph"                   # text, graph, or cod
+MODEL_TYPE="text"                   # text, graph, or cod
 BACKBONE="t5"                       # bert, t5, gpt2 (ignored for graph)
-TASKS="iso"                  # comma‐sep list (ignored for cod)
+TASKS="generation"                  # comma‐sep list (ignored for cod)
 DATASET="grailqa"                   # e.g. webqsp, cwq, grailqa
 
 # ─── pick the correct paths based on DATASET ──────────────────────────────────
@@ -16,7 +16,7 @@ RELATIONS_PATH="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/data/${
 OUTPUT_DIR_BASE="/data/shire/projects/GenQA/ISOKBQA/isomorphism_pred_KBQA/ckpts_rdutt"
 
 PTLM_MODEL="t5-base"  # bert-base-uncased, t5-base, gpt2 (ignored for graph)
-BATCH_SIZE=1
+BATCH_SIZE=4
 EPOCHS=50
 LR=5e-5
 PATIENCE=5
@@ -32,19 +32,19 @@ INPUT_MAX_LENGTH=1024
 GENERATION_MAX_LENGTH=128
 MAX_SEQ_LEN=512
 
-GNN_MODEL="gcn"  
-GNN_DEPTH=1
-HIDDEN_DIM=64
+GNN_MODEL="gat"  # 
+GNN_DEPTH=2
+HIDDEN_DIM=128
 NODE_EMB_DIM=768
 
 
-SHARED_DIM=64
+SHARED_DIM=2048
 DROPOUT=0.2
 
 # ─── list of seeds to run sequentially ───────────────────────────────────────
 # SEEDS=(18 42 15213 123456 987654)
-# SEEDS=(42 15213 123456)
-SEEDS=(42) 
+# SEEDS=(123456 987654)
+SEEDS=(123456 987654) 
 
 WEIGHTS="1"
 
@@ -57,12 +57,12 @@ for SEED in "${SEEDS[@]}"; do
 
   if [[ "$MODEL_TYPE" == "graph" ]]; then
     # include GNN_MODEL in names
-    NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${GNN_DEPTH}_${CLEAN_TASKS}_seed${SEED}_${TS}"
-    RUN_NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${GNN_DEPTH}_${CLEAN_TASKS}_seed${SEED}"
+    NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${GNN_DEPTH}_${HIDDEN_DIM}_${CLEAN_TASKS}_seed${SEED}_${TS}"
+    RUN_NAME="${DATASET}_${MODEL_TYPE}_${GNN_MODEL}_${GNN_DEPTH}_${HIDDEN_DIM}_${CLEAN_TASKS}_seed${SEED}"
   elif [[ "$MODEL_TYPE" == "cod" ]]; then
     # include BACKBONE in names
-    NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${GNN_MODEL}_${GNN_DEPTH}_${CLEAN_TASKS}_seed${SEED}_${TS}"
-    RUN_NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${GNN_MODEL}_${GNN_DEPTH}_${CLEAN_TASKS}_seed${SEED}"
+    NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${GNN_MODEL}_${GNN_DEPTH}_${HIDDEN_DIM}_${CLEAN_TASKS}_seed${SEED}_${TS}"
+    RUN_NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${GNN_MODEL}_${GNN_DEPTH}_${HIDDEN_DIM}_${CLEAN_TASKS}_seed${SEED}"
   else
     # just use DATASET, MODEL_TYPE, and TASKS
     NAME="${DATASET}_${MODEL_TYPE}_${BACKBONE}_${CLEAN_TASKS}_seed${SEED}_${TS}"

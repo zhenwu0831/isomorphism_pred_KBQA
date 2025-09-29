@@ -151,3 +151,47 @@ class GPT2MultiTaskModel(nn.Module):
     
     def generate(self, *args, **kwargs):
         return self.backbone.generate(*args, **kwargs)
+
+
+
+class T5MultiTaskGenModel(nn.Module):
+    """
+    T5 backbone supporting:
+      - s-expression generation ("generation")
+      - isomorphism classification ("iso")
+      - entity ranking ("ranking")
+    """
+    def __init__(self, params, tokenizer: PreTrainedTokenizer,
+                 modes=("generation", "iso", "ranking")):
+        super().__init__()
+        assert set(modes).issubset({"generation", "iso", "ranking"}), "Unsupported mode"
+        self.modes = set(modes)
+        self.tokenizer = tokenizer
+        self.backbone = T5ForConditionalGeneration.from_pretrained(params.ptlm_model)
+        self.backbone.resize_token_embeddings(len(tokenizer))
+        self.dropout = nn.Dropout(params.dropout)
+
+    def forward(self,
+                input_ids: torch.LongTensor,
+                attention_mask: torch.LongTensor,
+                labels: torch.LongTensor = None,
+                entity_spans: list = None):
+        gen_outputs = None
+
+        if "generation" in self.modes and labels is not None:
+            gen_outputs = self.backbone(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels,
+                return_dict=True
+            )
+
+        else: gen_outputs = None
+        
+        results = {'gen_outputs': gen_outputs}
+        
+        return results, None  # No pooled output for generation model
+    
+    def generate(self, *args, **kwargs):
+        return self.backbone.generate(*args, **kwargs)
+

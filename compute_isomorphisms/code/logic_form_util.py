@@ -11,11 +11,11 @@ REVERSE = True  # if REVERSE, then reverse relations are also taken into account
 path    = str(Path(__file__).parent.absolute())
 
 reverse_properties = {}
-with open('../../ontology/reverse_properties', 'r') as f:
+with open('/data/shire/projects/GenQA/ISOKBQA/ontology/reverse_properties', 'r') as f:
     for line in f:
         reverse_properties[line.split('\t')[0]] = line.split('\t')[1].replace('\n', '')
 
-with open('../../ontology/fb_roles', 'r') as f:
+with open('/data/shire/projects/GenQA/ISOKBQA/ontology/fb_roles', 'r') as f:
     content = f.readlines()
 
 relation_dr = {}
@@ -25,7 +25,7 @@ for line in content:
     relation_dr[fields[1]] = (fields[0], fields[2])
     relations.add(fields[1])
 
-with open('../../ontology/fb_types', 'r') as f:
+with open('/data/shire/projects/GenQA/ISOKBQA/ontology/fb_types', 'r') as f:
     content = f.readlines()
 
 upper_types = defaultdict(lambda: set())

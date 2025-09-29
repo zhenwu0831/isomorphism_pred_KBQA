@@ -1,6 +1,10 @@
 from collections import defaultdict as ddict
 import networkx as nx
-from networkx.algorithms.isomorphism import rooted_tree_isomorphism
+try:
+    from networkx.algorithms.isomorphism import rooted_tree_isomorphism
+except:
+    from networkx.algorithms.isomorphism.tree_isomorphism import rooted_tree_isomorphism
+
 import json, os, pickle, dill
 from pprint import pprint
 from tqdm import tqdm
@@ -9,11 +13,9 @@ from create_sem_matcher import *
 from logic_form_util import *
 from sparql_executor import *
 from pyvis.network import Network
-import matplotlib.pyplot as plt
 import pandas as pd
 import networkx.algorithms.isomorphism as nx_iso
-from pyvis.network import Network
-import matplotlib.pyplot as plt
+
 
 isomorphisms            = []
 grail_iso_cnt           = ddict(list)
@@ -399,11 +401,11 @@ if non_tree_isomorphisms == []:
 '''
 
 if tree_isomorphisms == []:
-    with open('isomorphisms.dill', 'rb') as infile:
+    with open('/data/shire/projects/GenQA/ISOKBQA/compute_isomorphisms/code/isomorphisms.dill', 'rb') as infile:
         tree_isomorphisms = dill.load(infile)
 
 if non_tree_isomorphisms == []:
-    with open('non-tree-isomorphisms.dill', 'rb') as infile:
+    with open('/data/shire/projects/GenQA/ISOKBQA/compute_isomorphisms/code/non-tree-isomorphisms.dill', 'rb') as infile:
         non_tree_isomorphisms = dill.load(infile)
 
 
