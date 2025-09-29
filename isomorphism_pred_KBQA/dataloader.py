@@ -164,11 +164,11 @@ class UnifiedDataset(Dataset):
                 "input_ids": torch.LongTensor(q2["input_ids"]),
                 "attention_mask": torch.LongTensor(q2["attention_mask"]),
                 "gnn_data": Data(
-                    x=torch.tensor(e["node_data"]["x"]),
-                    edge_index=torch.tensor(e["node_data"]["edge_index"]),
-                    edge_type=torch.tensor(e["node_data"]["edge_type"]),
-                    answer_x=torch.tensor(e["node_data"]["answer_x"]),
-                    head_x=torch.tensor(e["node_data"]["head_x"])
+                    x          = torch.tensor(e["node_data"]["x"],           dtype=torch.float),
+                    edge_index = torch.tensor(e["node_data"]["edge_index"],  dtype=torch.long),
+                    edge_type  = torch.tensor(e["node_data"]["edge_type"],   dtype=torch.long),
+                    answer_x   = torch.tensor(e["node_data"]["answer_x"],    dtype=torch.long),
+                    head_x     = torch.tensor(e["node_data"]["head_x"],      dtype=torch.long),
                 ),
                 # "node_dict": {v: k for k, v in node_dict.items()}
 
