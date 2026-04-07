@@ -1,0 +1,335 @@
+You are a QA system. S-expressions for KBQA are a concise and readable way to represent the structured query (the logical form) that corresponds to a natural language question. These are the permissible operations in an s-expression.
+
+| Function                                     | Returns                          | Description                                                                                |
+| -------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| (AND u1 u2)                                  | a set of entities                | AND function returns the intersection of two arguments                                     |
+| (COUNT u)                                    | a singleton set of integer       | COUNT function returns the cardinality of the argument                                     |
+| (R b)                                        | a set of (entity, entity) tuples | R function reverse each binary tuple (x, y) in the input to (y, x)                         |
+| (JOIN b u)                                   | a set of entities                | Inner join based on items in u and the second element of items in b                        |
+| (JOIN b1 b2)                                 | a set of (entity, entity) tuples | Inner join based on the first element of items in b2 and the second element of items in b1 |
+| (ARGMAX u b)<br>(ARGMIN u b)                 | a set of entities                | Return x in u such that (x, y) is in b and y is the largest / smallest                     |
+| (lt b n)<br>(le b n)<br>(gt b n)<br>(ge b n) | a set of entities                | Return all x such that (x, v) in b and v < / ≤ / > / ≥ n                                   |
+
+Your task is to generate an S‐expression to answer the given question using the entity and relations in knowledge graph tuples. Your answer MUST be a single valid Lisp‐style expression and doesn't include other text.
+
+Below are some examples to illustrate the task.
+
+Example 1
+
+Question:
+what religion was king louis xiv?
+
+Knowledge Graph information for this question:
+- The starting entity is [Louis XIV of France, m.04pwg]
+- The knowledge graph tuples are:
+[
+  ["m.0f8l9c", "location.location.adjoin_s", "m.02wrxl5"],
+  ["m.01gqg3", "time.event.includes_event", "m.0467ph"],
+  ["m.04ly1", "government.political_district.representatives", "m.0bws1gg"],
+  ["m.0c8wxp", "religion.religion.places_of_worship", "m.05t0fqv"],
+  ["m.0f8l9c", "location.location.adjoin_s", "m.02sgc61"],
+  ["m.0c8wxp", "religion.religion.places_of_worship", "m.065zm9p"],
+  ["m.04ly1", "topic_server.population_number", "2064000"],
+  ["m.0c8wxp", "religion.religion.places_of_worship", "m.09vqfv"],
+  ["m.0f8l9c", "location.country.languages_spoken", "m.02hwllm"],
+  ["m.0f8l9c", "topic_server.population_number", "51895793"],
+  ["m.0f8l9c", "location.country.form_of_government", "m.0c9rw5"],
+  ["m.0f8l9c", "location.location.contains", "m.09nkq"],
+  ["m.0f8l9c", "location.country.calling_code", "33"],
+  ["m.04ly1", "government.political_district.representatives", "m.0n5xwyn"],
+  ["m.06wxw", "sports.sports_team_location.teams", "m.06x76"],
+  ["m.0f8l9c", "military.military_combatant.casualties", "m.04kxmbp"],
+  ["m.04pwg", "common.topic.notable_types", "m.04fnrhx"],
+  ["m.0c8wxp", "religion.religion.places_of_worship", "m.01fdmj"],
+  ["m.0f8l9c", "location.location.primarily_containedby", "m.0852h"],
+  ["m.0f8l9c", "topic_server.population_number", "54982879"],
+  ["m.0f8l9c", "location.location.contains", "m.04vg8"],
+  ["m.04ly1", "location.administrative_division.first_level_division_of", "m.09c7w0"],
+  ["m.01hwvv", "location.location.containedby", "m.059t8"],
+  ["m.0c8wxp", "religion.religion.holidays", "m.016v69"],
+  ["m.06wxw", "location.location.people_born_here", "m.043ltbz"],
+  ["m.0f8l9c", "book.book_subject.works", "m.01k80h"],
+  ["m.0f8l9c", "location.location.adjoin_s", "m.02nzg8j"],
+  ["m.06wxw", "location.location.people_born_here", "m.07g2b"],
+  ["m.0f8l9c", "organization.organization_founder.organizations_founded", "m.059dn"],
+  ["m.06wxw", "location.location.containedby", "m.0t4z8qf"],
+  ["m.06wxw", "location.location.contains", "m.02tz9z"],
+  ["m.06wxw", "location.location.people_born_here", "m.01m4bv"],
+  ["m.0f8l9c", "topic_server.population_number", "59325793"],
+  ["m.0c8wxp", "religion.religion.places_of_worship", "m.01c921"],
+  ["m.0c8wxp", "religion.religion.holidays", "m.011ncyv_"],
+  ["m.0f8l9c", "topic_server.population_number", "53666947"],
+  ["m.01gqg3", "time.event.locations", "m.05r4w"],
+  ["m.06wxw", "film.film_location.featured_in_films", "m.05lm43"],
+  ["m.0f8l9c", "base.biblioness.bibs_location.loc_type", "Country"],
+  ["m.04pwg", "people.person.religion", "m.0c8wxp"],
+  ["m.0f8l9c", "location.location.contains", "m.030zzx"],
+  ["m.0f8l9c", "military.military_combatant.casualties", "m.03brnh0"],
+  ["m.04ly1", "location.location.contains", "m.0f2tj"],
+  ["m.04ly1", "topic_server.population_number", "2086000"],
+  ["m.04ly1", "topic_server.population_number", "2155000"],
+  ["m.06wxw", "location.location.people_born_here", "m.01_csg"],
+  ["m.0c8wxp", "religion.religion.holidays", "m.0_m14vv"],
+  ["m.04ly1", "topic_server.population_number", "1903000"],
+  ["m.0f8l9c", "location.location.events", "m.04c9m_"],
+  ["m.06wxw", "location.location.people_born_here", "m.0d8pw"]
+]
+
+**S-expression**:
+(JOIN (R people.person.religion) m.04pwg)
+
+Example 2
+
+Question:
+where does sam shepard live?
+
+Knowledge Graph information for this question:
+- The starting entity is [Sam Shepard, m.016yzz]
+- The knowledge graph tuples are:
+[
+  ["m.016yzz", "people.person.places_lived", "m.0yqs0q_"],
+  ["m.016yzz", "people.person.places_lived", "m.0yqs0vp"],
+  ["m.0yqs0p3", "people.place_lived.location", "m.06mz5"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.0jvw6z8"],
+  ["m.0yqs0qc", "people.place_lived.location", "m.07srw"],
+  ["m.016yzz", "people.person.places_lived", "m.0h33hjn"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.09rjw_4"],
+  ["m.09c7w0", "location.location.contains", "m.048_r41"],
+  ["m.02h40lc", "language.human_language.countries_spoken_in", "m.06s6l"],
+  ["m.09c7w0", "location.location.contains", "m.0sdyj"],
+  ["m.09c7w0", "location.country.first_level_divisions", "m.03s0w"],
+  ["m.09c7w0", "location.location.contains", "m.021hnt8"],
+  ["m.09c7w0", "location.location.contains", "m.0490hkd"],
+  ["m.0h33hhl", "people.place_lived.location", "m.035r6b"],
+  ["m.016yzz", "people.person.places_lived", "m.0yqs0k5"],
+  ["m.0h33hjn", "people.place_lived.start_date", "1971"],
+  ["m.09c7w0", "location.location.contains", "m.02qc09q"],
+  ["m.09c7w0", "book.book_subject.works", "m.04t31v7"],
+  ["m.0yqs0k5", "people.place_lived.location", "m.02xry"],
+  ["m.016yzz", "people.person.places_lived", "m.0h33hjd"],
+  ["m.0cbd2", "book.book_subject.works", "m.0gxmyk3"],
+  ["m.09c7w0", "location.location.contains", "m.02ph4t8"],
+  ["m.016yzz", "people.person.places_lived", "m.0c6lhpp"],
+  ["m.016yzz", "people.person.places_lived", "m.0h33hhl"],
+  ["m.0c6lhpp", "people.place_lived.location", "m.0wmtg"],
+  ["m.0kyk", "book.book_subject.works", "m.0gw8fc1"],
+  ["m.035r6b", "location.location.people_born_here", "m.016yzz"],
+  ["m.0yqs0q_", "people.place_lived.location", "m.034tl"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.0n99km_"],
+  ["m.09c7w0", "location.location.contains", "m.06t2qb"],
+  ["m.09c7w0", "location.location.contains", "m.03897b"],
+  ["m.016yzz", "people.person.profession", "m.09jwl"],
+  ["m.09c7w0", "location.location.contains", "m.0490b5l"],
+  ["m.016yzz", "people.person.places_lived", "m.0yqs0qc"],
+  ["m.0h33hjd", "people.place_lived.start_date", "1963"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.0wkh408"],
+  ["m.09c7w0", "location.location.contains", "m.048_ndx"],
+  ["m.09c7w0", "location.location.contains", "m.0490jd8"],
+  ["m.0yqs0vp", "people.place_lived.location", "m.0r06n"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.0cr2vdd"],
+  ["m.09c7w0", "location.location.contains", "m.02psl3n"],
+  ["m.09c7w0", "location.location.contains", "m.0490nnp"],
+  ["m.016yzz", "people.person.places_lived", "m.0yqs0p3"],
+  ["m.09c7w0", "location.location.contains", "m.0490sx_"],
+  ["m.0ytvbt4", "people.place_lived.location", "m.0r0_5"],
+  ["m.09c7w0", "location.location.contains", "m.04913z4"],
+  ["m.016yzz", "people.person.places_lived", "m.0ytvbt4"],
+  ["m.09c7w0", "location.location.contains", "m.02q5bpj"],
+  ["m.03_d0", "book.book_subject.works", "m.0hnx0cj"],
+  ["m.09c7w0", "location.location.contains", "m.0sg1g"]
+]
+
+**S-expression**:
+(JOIN (R people.place_lived.location) (AND (JOIN people.place_lived.time_macro 2015^^http://www.w3.org/2001/XMLSchema#date) (JOIN (R people.person.places_lived) m.016yzz)))
+
+Example 3
+
+Question:
+where did richard nixon go to high school?
+
+Knowledge Graph information for this question:
+- The starting entity is [Richard Nixon, m.06c97]
+- The knowledge graph tuples are:
+[
+  ["m.034rd", "government.us_president.presidency_number", "1"],
+  ["m.0gckrz", "organization.organization.date_founded", "1996"],
+  ["m.03gh4", "topic_server.population_number", "964691"],
+  ["m.0d05w3", "location.location.contains", "m.09r3kx"],
+  ["m.0c5jr12", "education.education.institution", "m.0cg131"],
+  ["m.0cg131", "education.school.highest_grade_taught", "m.042_h5"],
+  ["m.02s82", "symbols.name_source.namesakes", "m.08w9nc"],
+  ["m.04rrx", "government.governmental_jurisdiction.governing_officials", "m.04l4r9y"],
+  ["m.09c7w0", "location.location.contains", "m.0490wrn"],
+  ["m.0fd_1", "people.person.nationality", "m.09c7w0"],
+  ["m.09c7w0", "location.location.contains", "m.048_w56"],
+  ["m.03v0t", "location.location.contains", "m.0490l2h"],
+  ["m.03v0t", "location.location.contains", "m.0scjf"],
+  ["m.0vg8x", "topic_server.population_number", "3891"],
+  ["m.01s5m5", "fictional_universe.fictional_character.education", "m.01cyd5"],
+  ["m.03v0t", "location.location.contains", "m.0s4ps"],
+  ["m.05tbn", "base.biblioness.bibs_location.loc_type", "State"],
+  ["m.02hrh0_", "location.location.containedby", "m.0dfcn"],
+  ["m.03v1s", "government.governmental_jurisdiction.governing_officials", "m.04l4shz"],
+  ["m.07ssc", "location.country.administrative_divisions", "m.02z8_s"],
+  ["m.05r7t", "location.location.contains", "m.0dj40xt"],
+  ["m.059g4", "location.location.contains", "m.07vd68"],
+  ["m.02q2x61", "education.educational_institution.students_graduates", "m.0n0pbzp"],
+  ["m.01n7q", "topic_server.population_number", "36604337"],
+  ["m.032p8", "people.person.profession", "m.02h6fbs"],
+  ["m.03v0t", "location.location.contains", "m.02vl_gr"],
+  ["m.06c97", "people.person.education", "m.03lb5yj"],
+  ["m.084wvj", "location.location.containedby", "m.09c7w0"],
+  ["m.08nm4j", "common.topic.notable_types", "m.01y2hn6"],
+  ["m.05r7t", "location.location.contains", "m.0clw8dd"],
+  ["m.09c7w0", "government.governmental_jurisdiction.governing_officials", "m.0bfmky8"],
+  ["m.05tbn", "topic_server.population_number", "11770865"],
+  ["m.06c97", "people.person.education", "m.0c5jr12"],
+  ["m.01fhry", "symbols.name_source.namesakes", "m.084wvj"],
+  ["m.01n7q", "location.location.contains", "m.071vr"],
+  ["m.0ftxw", "location.location.people_born_here", "m.018r3g"],
+  ["m.05tbn", "topic_server.population_number", "9952000"],
+  ["m.01_d4", "location.location.contains", "m.0wfh_ns"],
+  ["m.03lb5yj", "education.education.institution", "m.0ftsh5"],
+  ["m.0cg131", "common.topic.notable_types", "m.01y2hn6"],
+  ["m.0d05w3", "location.location.contains", "m.0fmb72"],
+  ["m.06w97y", "location.location.containedby", "m.09c7w0"],
+  ["m.03v0t", "location.location.contains", "m.02pqgc5"],
+  ["m.01p5_w", "education.educational_institution.students_graduates", "m.02kvkpg"],
+  ["m.0dclg", "sports.sports_team_location.teams", "m.05tg3"],
+  ["m.06c97", "government.us_president.presidency_number", "37"],
+  ["m.0ftsh5", "common.topic.notable_types", "m.01y2hn6"],
+  ["m.05r7t", "base.aareas.schema.administrative_area.administrative_children", "m.02_brz"],
+  ["m.0ftsh5", "education.school.highest_grade_taught", "m.042_h5"],
+  ["m.059rby", "topic_server.population_number", "9361000"]
+]
+
+**S-expression**:
+(AND (JOIN common.topic.notable_types m.01y2hn6) (JOIN (R education.education.institution) (JOIN (R people.person.education) m.06c97)))
+
+Example 4
+
+Question:
+who is the leader of the dominican republic 2011?
+
+Knowledge Graph information for this question:
+- The starting entity is [Dominican Republic, m.027rn]
+- The knowledge graph tuples are:
+[
+  ["m.0n5bggs", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0j5zwrc"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bh79"],
+  ["m.0b76q3h", "government.politician.government_positions_held", "m.0n5bh6c"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bh9v"],
+  ["m.0b778wj", "government.politician.government_positions_held", "m.0n5bgk0"],
+  ["m.0n5bgft", "government.government_position_held.jurisdiction_of_office", "m.027rn"],
+  ["m.0b75cpd", "people.deceased_person.place_of_death", "m.0fthl"],
+  ["m.04n47x8", "people.person.gender", "m.05zppz"],
+  ["m.0jvlmpz", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bgfc"],
+  ["m.0b774xv", "people.person.gender", "m.05zppz"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bgst"],
+  ["m.0n5bhd_", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bg9w", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bgjt", "government.government_position_held.office_holder", "m.03bdrv"],
+  ["m.0n5bhfp", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.05z_psb", "people.person.profession", "m.04gc2"],
+  ["m.0n5bgh1", "government.government_position_held.basic_title", "m.060c4"],
+  ["m.0n5bggs", "government.government_position_held.basic_title", "m.060c4"],
+  ["m.05p9bm7", "people.person.gender", "m.05zppz"],
+  ["m.0n5bgw8", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bgt7", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bhd_"],
+  ["m.0b77_yh", "government.politician.government_positions_held", "m.0n5bh6n"],
+  ["m.03bdrv", "people.person.place_of_birth", "m.0fthl"],
+  ["m.038hv0", "government.politician.government_positions_held", "m.0n5bgh1"],
+  ["m.0n5bgbl", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bgjt"],
+  ["m.02rff3s", "people.person.gender", "m.05zppz"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bh0r"],
+  ["m.0n5bgw1", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bh0g", "government.government_position_held.jurisdiction_of_office", "m.027rn"],
+  ["m.02qxg8v", "people.person.place_of_birth", "m.03_33l"],
+  ["m.0n5bgym", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bgdp", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bhd_", "government.government_position_held.basic_title", "m.060c4"],
+  ["m.0b752z_", "people.person.place_of_birth", "m.03hkyj"],
+  ["m.0n5bh6z", "government.government_position_held.jurisdiction_of_office", "m.027rn"],
+  ["m.0gkz1zp", "government.politician.government_positions_held", "m.0n5bg9w"],
+  ["m.02628yy", "government.politician.government_positions_held", "m.0n5bh0r"],
+  ["m.0n5bgz5", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bh5t", "government.government_position_held.office_holder", "m.0b75cpd"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bh5t"],
+  ["m.0n5bh79", "government.government_position_held.basic_title", "m.060c4"],
+  ["m.0n5bh9v", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.0n5bg98", "government.government_position_held.office_position_or_title", "g.120vz7rb"],
+  ["m.027rn", "government.governmental_jurisdiction.governing_officials", "m.0n5bg9w"],
+  ["m.03h15gm", "people.person.place_of_birth", "m.0fthl"],
+  ["m.0n5bgtz", "government.government_position_held.office_holder", "m.0b774xv"]
+]
+
+**S-expression**:
+(JOIN (R government.government_position_held.office_holder) (AND (JOIN government.government_position_held.time_macro 2011^^http://www.w3.org/2001/XMLSchema#date) (AND (JOIN government.government_position_held.office_position_or_title g.120vz7rb) (JOIN (R government.governmental_jurisdiction.governing_officials) m.027rn))))
+
+Example 5
+
+Question:
+where do the san francisco giants play baseball?
+
+Knowledge Graph information for this question:
+- The starting entity is [San Francisco Giants, m.0713r]
+- The knowledge graph tuples are:
+[
+  ["m.06pg50_", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.0d6lp", "location.citytown.postal_codes", "m.01zn0dr"],
+  ["m.04_7n21", "sports.sports_team_roster.player", "m.03n69x"],
+  ["m.03cyzbv", "people.person.profession", "m.04gc2"],
+  ["m.0713r", "sports.sports_team.arena_stadium", "m.01_gsg"],
+  ["m.0468cj", "sports.sports_championship_event.runner_up", "m.0713r"],
+  ["m.0k079rf", "common.topic.notable_types", "m.0hn6bxg"],
+  ["m.0d6lp", "location.location.contains", "m.057mlm"],
+  ["m.06pg577", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.06pg52f", "baseball.batting_statistics.season", "m.02h7sct"],
+  ["m.0527d0b", "baseball.current_coaching_tenure.baseball_coach", "m.07w9kn"],
+  ["m.0527cyq", "baseball.current_coaching_tenure.baseball_coach", "m.02plhsr"],
+  ["m.06pg58n", "baseball.batting_statistics.season", "m.025ygws"],
+  ["m.04qtx7", "sports.sports_facility.teams", "m.0713r"],
+  ["m.0d6lp", "periodicals.newspaper_circulation_area.newspapers", "m.06_gr"],
+  ["m.0k079sg", "sports.sports_facility.teams", "m.0713r"],
+  ["m.01_gsg", "architecture.structure.opened", "\"2000-03-31\""],
+  ["m.06pg4st", "baseball.batting_statistics.season", "m.02h7r_9"],
+  ["m.06pg5b8", "baseball.batting_statistics.season", "m.025ygqm"],
+  ["m.09gnk2r", "sports.sports_championship_event.championship", "m.0fjp3"],
+  ["m.0527d0s", "baseball.current_coaching_tenure.baseball_coach", "m.085wxv"],
+  ["m.017grj", "architecture.structure.opened", "\"1960-04-12\""],
+  ["m.0crt4b6", "sports.sports_league_participation.league", "m.09p14"],
+  ["m.03b37x", "common.topic.notable_types", "m.025672b"],
+  ["m.06pg4x3", "baseball.batting_statistics.season", "m.02h7s15"],
+  ["m.01_gsg", "location.location.containedby", "m.0d6lp"],
+  ["m.0527d03", "baseball.current_coaching_tenure.baseball_coach", "m.057jcc"],
+  ["m.0117q3yz", "sports.sports_championship_event.champion", "m.0713r"],
+  ["m.06pg5cw", "baseball.batting_statistics.season", "m.0dx84s"],
+  ["m.06pg4vj", "baseball.batting_statistics.season", "m.02h7s8p"],
+  ["m.0527d13", "baseball.current_coaching_tenure.baseball_coach", "m.02680w9"],
+  ["m.0d6lp", "location.location.contains", "m.04lh5gw"],
+  ["m.0527d0k", "baseball.current_coaching_tenure.baseball_coach", "m.079w94"],
+  ["m.06pg4_g", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.0d6lp", "location.location.contains", "m.058h2l"],
+  ["m.06pg5fj", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.039nhz", "location.location.containedby", "m.02_286"],
+  ["m.0713r", "time.participant.event", "m.0ds8qct"],
+  ["m.06pg4ys", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.06pg541", "baseball.batting_statistics.season", "m.026fmqm"],
+  ["m.01_gsg", "location.location.events", "m.0ds8qct"],
+  ["m.0527d1b", "baseball.current_coaching_tenure.baseball_coach", "m.02yf3x"],
+  ["m.018jz", "media_common.netflix_genre.titles", "m.0f7x7b"],
+  ["m.0ds8qct", "time.event.instance_of_recurring_event", "m.0fjp3"],
+  ["m.04j747", "time.event.locations", "m.017grj"],
+  ["m.02mjnm", "sports.sports_facility.teams", "m.0713r"],
+  ["m.06pg5h6", "baseball.batting_statistics.season", "m.0285r5d"],
+  ["m.06pg55r", "baseball.batting_statistics.team", "m.0713r"],
+  ["m.0d6lp", "location.citytown.postal_codes", "m.01zn03_"],
+  ["m.04tfr4", "time.event.locations", "m.017grj"]
+]
+
+**S-expression**:
+(ARGMAX (JOIN (R sports.sports_team.arena_stadium) m.0713r) architecture.structure.opened)

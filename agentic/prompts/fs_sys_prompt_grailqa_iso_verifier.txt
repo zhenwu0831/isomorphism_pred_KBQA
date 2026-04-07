@@ -1,0 +1,313 @@
+You are a QA system. S-expressions for KBQA are a concise and readable way to represent the structured query (the logical form) that corresponds to a natural language question. These are the permissible operations in an s-expression.
+
+| Function                                     | Returns                          | Description                                                                                |
+| -------------------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| (AND u1 u2)                                  | a set of entities                | AND function returns the intersection of two arguments                                     |
+| (COUNT u)                                    | a singleton set of integer       | COUNT function returns the cardinality of the argument                                     |
+| (R b)                                        | a set of (entity, entity) tuples | R function reverse each binary tuple (x, y) in the input to (y, x)                         |
+| (JOIN b u)                                   | a set of entities                | Inner join based on items in u and the second element of items in b                        |
+| (JOIN b1 b2)                                 | a set of (entity, entity) tuples | Inner join based on the first element of items in b2 and the second element of items in b1 |
+| (ARGMAX u b)<br>(ARGMIN u b)                 | a set of entities                | Return x in u such that (x, y) is in b and y is the largest / smallest                     |
+| (lt b n)<br>(le b n)<br>(gt b n)<br>(ge b n) | a set of entities                | Return all x such that (x, v) in b and v < / ≤ / > / ≥ n                                   |
+
+In addition, we provide definitions of the reasoning patterns (RP) that these s-expressions can take. 
++------+--------------------------------------------------------------------------+
+| RP   | Definition                                                               |
++------+--------------------------------------------------------------------------+
+| T-0  | A single-hop path from the constraint to the answer.                    |
++------+--------------------------------------------------------------------------+
+| T-1  | A two-hop path from the constraint to the answer.                        |
++------+--------------------------------------------------------------------------+
+| T-2  | Two single-hop paths arising from two different constraints and          |
+|      | converging to the same answer.                                            |
++------+--------------------------------------------------------------------------+
+| T-3  | Two paths (one single-hop and another two-hop) arising from two          |
+|      | different constraints and converging to the same answer.                  |
++------+--------------------------------------------------------------------------+
+| T-4  | Two two-hop paths arising from two different constraints and              |
+|      | converging to an intermediate common node before reaching the answer.    |
++------+--------------------------------------------------------------------------+
+| T-5  | A three-hop path from the constraint to the answer.                       |
++------+--------------------------------------------------------------------------+
+
+Your task is to generate an S‐expression to answer the given question using the entity and relations in knowledge graph tuples. Your answer MUST be a single valid Lisp‐style expression and doesn't include other text.
+
+Below are some examples to illustrate the task.
+
+Example 1
+
+Question:
+oxybutynin chloride 5 extended release film coated tablet is the ingredients of what routed drug?
+
+Knowledge Graph information for this question:
+- The starting entities are [m.0hqs1x_, medicine.drug_formulation, Oxybutynin chloride 5 extended release film coated tablet]
+- The knowledge graph tuples are:
+[
+["medicine.drug_formulation", "medicine.drug_formulation.active_moieties", "medicine.drug"],
+["medicine.routed_drug", "medicine.routed_drug.marketed_formulations", "medicine.drug_formulation"],
+["medicine.drug_formulation", "medicine.drug_formulation.active_ingredients", "medicine.drug_ingredient"],
+["type.boolean", "medicine.manufactured_drug_form.coating", "medicine.manufactured_drug_form"],
+["medicine.routed_drug", "medicine.drug_formulation.routed_drug", "medicine.drug_formulation"],
+["medicine.drug_formulation", "medicine.drug_formulation.dosage_form", "medicine.drug_dosage_form"],
+["medicine.drug_formulation", "medicine.drug_formulation.routed_drug", "medicine.routed_drug"],
+["medicine.drug_formulation", "medicine.drug_formulation.formulation_of", "medicine.drug"],
+["medicine.drug_formulation", "medicine.routed_drug.marketed_formulations", "medicine.routed_drug"],
+["medicine.routed_drug", "medicine.routed_drug.routed_drug_of", "medicine.drug"],
+["medicine.drug", "medicine.drug.part_of_compound_drug", "medicine.compound_drug"],
+["medicine.drug_ingredient", "medicine.drug_ingredient.active_moiety_of_formulation", "medicine.drug_formulation"],
+["medicine.drug_formulation_category", "medicine.drug_formulation_category.drug_formulations", "medicine.drug_formulation"],
+["medicine.drug_formulation", "medicine.drug_formulation.active_ingredient_moieties", "medicine.drug_ingredient"],
+["business.product_ingredient", "business.product_ingredient.derivatives", "business.product_ingredient"],
+["business.product_ingredient", "business.product_ingredient.ingredients", "business.product_ingredient"],
+["medicine.drug_ingredient", "medicine.drug_ingredient.active_ingredient_of_formulation", "medicine.drug_formulation"],
+["medicine.drug_ingredient", "medicine.drug_ingredient.active_moiety_of_drug", "medicine.drug"],
+["medicine.drug", "medicine.drug.active_moieties", "medicine.drug_ingredient"],
+["medicine.drug", "medicine.drug.marketed_formulations", "medicine.drug_formulation"],
+["medicine.manufactured_drug_form", "medicine.manufactured_drug_form.coating", "type.boolean"],
+["medicine.drug_dosage_form", "medicine.drug_dosage_form.formulations_available_in_this_form", "medicine.drug_formulation"],
+["medicine.drug", "medicine.drug.active_moiety_of", "medicine.drug_formulation"],
+["medicine.drug", "medicine.routed_drug.routed_drug_of", "medicine.routed_drug"],
+["medicine.drug_ingredient", "medicine.drug_ingredient.more_general_ingredient", "medicine.drug_ingredient"],
+["medicine.routed_drug", "medicine.drug.routed_drugs", "medicine.drug"],
+["medicine.drug_brand", "medicine.drug_brand.canonical_routed_drugs", "medicine.routed_drug"],
+["medicine.drug_ingredient", "medicine.drug_ingredient.more_specific_ingredient", "medicine.drug_ingredient"],
+["medicine.drug_formulation", "medicine.drug_formulation.drug_category", "medicine.drug_formulation_category"],
+["medicine.compound_drug", "medicine.compound_drug.compound_of", "medicine.drug"],
+["medicine.drug", "medicine.drug.routed_drugs", "medicine.routed_drug"],
+["medicine.routed_drug", "medicine.drug_brand.canonical_routed_drugs", "medicine.drug_brand"]
+]
+
+**S-expression**:
+(AND medicine.routed_drug (JOIN medicine.routed_drug.marketed_formulations m.0hqs1x_))
+
+The corresponding RP is T-0.
+
+Example 2
+
+Question:
+the leaders of the earliest established religious organization are given what title?
+
+Knowledge Graph information for this question:
+- The starting entities are [0^^http://www.w3.org/2001/XMLSchema#int, type.datetime, 0]
+- The knowledge graph tuples are:
+[
+["organization.leadership", "organization.leadership.from", "type.datetime"],
+["religion.religious_organization_leadership", "religion.religious_organization.leaders", "religion.religious_organization"],
+["religion.religious_organization", "religion.religious_organization.leaders", "religion.religious_organization_leadership"],
+["organization.leadership", "organization.leadership.as_of_date", "type.datetime"],
+["religion.religious_organization_leadership", "religion.religious_organization_leadership.end_date", "type.datetime"],
+["religion.religious_leader", "religion.religious_leader.religious_leadership", "religion.religious_organization_leadership"],
+["religion.religious_leadership_jurisdiction_appointment", "religion.religious_leadership_jurisdiction_appointment.title", "religion.religious_leadership_title"],
+["religion.religious_leadership_title", "religion.religious_leadership_jurisdiction_appointment.title", "religion.religious_leadership_jurisdiction_appointment"],
+["type.datetime", "religion.religious_organization_leadership.start_date", "religion.religious_organization_leadership"],
+["type.datetime", "rev_religion.religious_organization_leadership.start_date", "religion.religious_organization_leadership"],
+["type.datetime", "rev_organization.leadership.as_of_date", "organization.leadership"],
+["type.datetime", "rev_organization.leadership.from", "organization.leadership"],
+["type.datetime", "rev_organization.organization_board_membership.to", "organization.organization_board_membership"],
+["organization.role", "organization.role.governors", "organization.organization_board_membership"],
+["type.datetime", "organization.leadership.as_of_date", "organization.leadership"],
+["religion.religious_organization", "religion.religious_organization_leadership.organization", "religion.religious_organization_leadership"],
+["religion.religious_organization_leadership", "religion.religious_organization_leadership.organization", "religion.religious_organization"],
+["religion.religious_leadership_title", "religion.religious_leadership_title.rank_or_role", "religion.religious_leadership_role"],
+["type.datetime", "religion.religious_organization_leadership.end_date", "religion.religious_organization_leadership"],
+["organization.organization_board_membership", "organization.organization_board_membership.from", "type.datetime"],
+["organization.leadership", "organization.leadership.role", "organization.role"],
+["religion.religious_leadership_role", "religion.religious_leadership_role.religious_titles", "religion.religious_leadership_title"],
+["religion.religious_organization_leadership", "religion.religious_organization_leadership.start_date", "type.datetime"],
+["religion.religious_organization_leadership", "religion.religious_organization_leadership.leader", "religion.religious_leader"],
+["organization.role", "organization.role.leaders", "organization.leadership"],
+["religion.religious_leadership_role", "religion.religious_leadership_title.rank_or_role", "religion.religious_leadership_title"],
+["organization.organization_board_membership", "organization.organization_board_membership.to", "type.datetime"],
+["religion.religious_organization_leadership", "religion.religious_leadership_title.leaders", "religion.religious_leadership_title"],
+["religion.religious_organization_leadership", "religion.religious_organization_leadership.role", "religion.religious_leadership_title"],
+["type.datetime", "rev_organization.leadership.to", "organization.leadership"],
+["type.datetime", "rev_religion.religious_organization_leadership.end_date", "religion.religious_organization_leadership"],
+["organization.organization_board_membership", "organization.organization_board_membership.title_old", "business.board_member_title"],
+["religion.religious_leader", "religion.religious_organization_leadership.leader", "religion.religious_organization_leadership"],
+["religion.religious_leadership_title", "religion.religious_leadership_title.leaders", "religion.religious_organization_leadership"],
+["organization.leadership", "organization.leadership.to", "type.datetime"],
+["type.datetime", "rev_organization.organization_board_membership.from", "organization.organization_board_membership"],
+["organization.organization_board_membership", "organization.organization_board_membership.role", "organization.role"],
+["business.board_member_title", "rev_organization.organization_board_membership.title_old", "organization.organization_board_membership"],
+["religion.religious_leadership_title", "religion.religious_organization_leadership.role", "religion.religious_organization_leadership"]
+]
+
+**S-expression**:
+(ARGMIN religion.religious_leadership_title (JOIN religion.religious_leadership_title.leaders religion.religious_organization_leadership.start_date))
+
+The corresponding RP is T-1.
+
+Example 3
+
+Question:
+vibraphonist and film score composer are two titles of which politician?
+
+Knowledge Graph information for this question:
+- The starting entities are [m.04l1gwb, people.profession, Film Score Composer], [m.01663r, music.musician_profession, Vibraphonist]
+- The knowledge graph tuples are:
+[
+["government.government_position_held", "government.government_position_held.office_holder", "government.politician"],
+["people.profession", "people.profession.specializations", "people.profession"],
+["people.person", "people.person.profession", "people.profession"],
+["people.profession", "people.person.profession", "people.person"],
+["people.profession", "people.profession.corresponding_type", "type.type"],
+["royalty.chivalric_title_gender_equivalency", "royalty.chivalric_title_gender_equivalency.equivalent_titles", "royalty.chivalric_title"],
+["people.profession", "people.profession.part_of_professional_field", "people.professional_field"],
+["people.profession", "people.professional_field.professions_in_this_field", "people.professional_field"],
+["people.person", "people.profession.people_with_this_profession", "people.profession"],
+["people.profession", "people.profession.specialization_of", "people.profession"],
+["type.datetime", "sports.pro_athlete.career_start", "sports.pro_athlete"],
+["business.job_title", "business.job_title.people_with_this_title", "business.employment_tenure"],
+["type.type", "people.profession.corresponding_type", "people.profession"],
+["business.employment_tenure", "business.job_title.people_with_this_title", "business.job_title"],
+["people.profession", "people.profession.people_with_this_profession", "people.person"],
+["music.instrument", "music.musician_profession.instrument", "music.musician_profession"],
+["government.government_position_held", "government.government_position_held.office_position_or_title", "government.government_office_or_title"],
+["government.government_office_or_title", "government.government_office_or_title.office_holders", "government.government_position_held"],
+["sports.pro_athlete", "sports.pro_athlete.career_start", "type.datetime"],
+["people.professional_field", "people.profession.part_of_professional_field", "people.profession"],
+["people.professional_field", "people.professional_field.professions_in_this_field", "people.profession"],
+["royalty.chivalric_title", "royalty.chivalric_title.opposite_gender_equivalent", "royalty.chivalric_title_gender_equivalency"],
+["government.politician", "government.politician.government_positions_held", "government.government_position_held"],
+["music.musician_profession", "music.musician_profession.instrument", "music.instrument"]
+]
+
+**S-expression**:
+(AND government.politician (AND (JOIN (R people.profession.people_with_this_profession) m.04l1gwb) (JOIN people.person.profession m.01663r)))
+
+The corresponding RP is T-2.
+
+Example 4
+
+Question:
+what is another martial art that involves hybrid and is in the same category as northern shaolin?
+
+Knowledge Graph information for this question:
+- The starting entities are [m.071nmn, martial_arts.martial_art, Northern Shaolin], [m.03nzdm_, martial_arts.martial_art_category, Hybrid]
+- The knowledge graph tuples are:
+[
+["martial_arts.martial_art", "martial_arts.martial_art.well_known_practitioner", "martial_arts.martial_artist"],
+["martial_arts.martial_art", "martial_arts.martial_art_category.martial_arts", "martial_arts.martial_art_category"],
+["martial_arts.martial_art", "martial_arts.martial_arts_organization.martial_arts", "martial_arts.martial_arts_organization"],
+["martial_arts.martial_art", "martial_arts.martial_arts_certification.art", "martial_arts.martial_arts_certification"],
+["martial_arts.martial_art", "martial_arts.martial_artist.martial_art", "martial_arts.martial_artist"],
+["martial_arts.martial_art_category", "martial_arts.martial_art.category", "martial_arts.martial_art"],
+["biology.hybrid_parent_classification", "biology.hybrid_parent_classification.hybrids", "biology.hybrid_parentage"],
+["biology.hybrid_parentage", "biology.hybrid_parent_classification.hybrids", "biology.hybrid_parent_classification"],
+["martial_arts.martial_arts_certification", "martial_arts.martial_arts_certification.person", "martial_arts.martial_artist"],
+["location.location", "martial_arts.martial_art.origin", "martial_arts.martial_art"],
+["martial_arts.martial_arts_certification", "martial_arts.martial_arts_certification.art", "martial_arts.martial_art"],
+["biology.hybrid", "biology.hybrid.parent_classifications", "biology.hybrid_parentage"],
+["martial_arts.martial_arts_organization", "martial_arts.martial_arts_organization.qualifications_awarded", "martial_arts.martial_arts_certification"],
+["martial_arts.martial_artist", "martial_arts.martial_artist.martial_art", "martial_arts.martial_art"],
+["martial_arts.martial_art", "rev_martial_arts.martial_arts_certification.art", "martial_arts.martial_arts_certification"],
+["martial_arts.martial_artist", "martial_arts.martial_artist.certifications", "martial_arts.martial_arts_certification"],
+["biology.hybid_parentage", "biology.hybrid.parent_classifications", "biology.hybrid"],
+["martial_arts.martial_art", "rev_martial_arts.martial_arts_organization.martial_arts", "martial_arts.martial_arts_organization"],
+["martial_arts.martial_arts_certification", "martial_arts.martial_arts_certification.certifying_body", "martial_arts.martial_arts_organization"],
+["martial_arts.martial_art_category", "martial_arts.martial_art_category.martial_arts", "martial_arts.martial_art"],
+["martial_arts.martial_arts_organization", "martial_arts.martial_arts_organization.martial_arts", "martial_arts.martial_art"],
+["martial_arts.martial_arts_qualification", "martial_arts.martial_arts_qualification.martial_artists", "martial_arts.martial_arts_certification"],
+["martial_arts.martial_arts_certification", "martial_arts.martial_arts_certification.qualification", "martial_arts.martial_arts_qualification"],
+["media_common.media_genre_equivalent_topic", "media_common.media_genre.equivalent_topic", "media_common.media_genre"],
+["media_common.media_genre", "media_common.media_genre.equivalent_topic", "media_common.media_genre_equivalent_topic"],
+["martial_arts.martial_arts_organization", "martial_arts.martial_arts_certification.certifying_body", "martial_arts.martial_arts_certification"],
+["martial_arts.martial_art", "martial_arts.martial_art.category", "martial_arts.martial_art_category"],
+["martial_arts.martial_art", "martial_arts.martial_art.origin", "location.location"]
+]
+
+**S-expression**:
+(AND martial_arts.martial_art (AND (JOIN martial_arts.martial_art.category (JOIN (R martial_arts.martial_art.category) m.071nmn)) (JOIN (R martial_arts.martial_art_category.martial_arts) m.03nzdm_)))
+
+The corresponding RP is T-3.
+
+
+Example 5
+
+Question:
+the camera with a sensor from matsushita electric industrial co., ltd. and a compression format of mts uses which viewfinder?
+
+Knowledge Graph information for this question:
+- The starting entities are [m.042zv3q, digicams.camera_compressed_format, mts], [m.0nk5b, digicams.camera_sensor_manufacturer, matsushita electric industrial co., ltd.]
+- The knowledge graph tuples are:
+[
+["digicams.digital_camera", "digicams.digital_camera.supported_resolutions", "digicams.camera_resolution"],
+["digicams.camera_format", "digicams.digital_camera.format", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.camera_sensor_type.digital_cameras", "digicams.camera_sensor_type"],
+["digicams.digital_camera", "digicams.digital_camera.viewfinder_type", "digicams.camera_viewfinder_type"],
+["digicams.camera_sensor_manufacturer", "digicams.camera_sensor_manufacturer.cameras", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.camera_compressed_format.cameras", "digicams.camera_compressed_format"],
+["digicams.camera_uncompressed_format", "digicams.camera_uncompressed_format.cameras", "digicams.digital_camera"],
+["digicams.camera_sensor_size", "rev_digicams.digital_camera.sensor_size", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.digital_camera.compressed_formats", "digicams.camera_compressed_format"],
+["digicams.digital_camera", "digicams.digital_camera.dimensions", "digicams.camera_dimensions"],
+["digicams.camera_sensor_manufacturer", "digicams.digital_camera.camera_sensor_manufacturer", "digicams.digital_camera"],
+["digicams.camera_viewfinder_type", "digicams.camera_viewfinder_type.digital_cameras", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.camera_sensor_manufacturer.cameras", "digicams.camera_sensor_manufacturer"],
+["digicams.camera_digital_zoom_capability", "rev_digicams.digital_camera.digital_zoom_capability", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.digital_camera.camera_sensor_manufacturer", "digicams.camera_sensor_manufacturer"],
+["digicams.digital_camera", "digicams.digital_camera.max_resolution", "digicams.camera_resolution"],
+["digicams.camera_sensor_type", "digicams.camera_sensor_type.digital_cameras", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.camera_format.cameras", "digicams.camera_format"],
+["digicams.digital_camera", "digicams.digital_camera.sensor_type", "digicams.camera_sensor_type"],
+["digicams.digital_camera", "digicams.digital_camera.format", "digicams.camera_format"],
+["digicams.digital_camera", "digicams.digital_camera.uncompressed_formats", "digicams.camera_uncompressed_format"],
+["digicams.digital_camera", "digicams.camera_viewfinder_type.digital_cameras", "digicams.camera_viewfinder_type"],
+["digicams.camera_compressed_format", "digicams.camera_compressed_format.cameras", "digicams.digital_camera"],
+["digicams.camera_format", "digicams.camera_format.cameras", "digicams.digital_camera"],
+["digicams.camera_resolution", "rev_digicams.digital_camera.max_resolution", "digicams.digital_camera"],
+["digicams.camera_dimensions", "rev_digicams.digital_camera.dimensions", "digicams.digital_camera"],
+["digicams.digital_camera", "digicams.digital_camera.sensor_size", "digicams.camera_sensor_size"],
+["digicams.digital_camera", "digicams.digital_camera.digital_zoom_capability", "digicams.camera_digital_zoom_capability"],
+["digicams.camera_compressed_format", "digicams.digital_camera.compressed_formats", "digicams.digital_camera"],
+["digicams.camera_sensor_type", "digicams.digital_camera.sensor_type", "digicams.digital_camera"],
+["digicams.camera_resolution", "rev_digicams.digital_camera.supported_resolutions", "digicams.digital_camera"],
+["digicams.camera_viewfinder_type", "digicams.digital_camera.viewfinder_type", "digicams.digital_camera"]
+]
+
+**S-expression**:
+(AND digicams.camera_viewfinder_type (JOIN digicams.camera_viewfinder_type.digital_cameras (AND (JOIN (R digicams.camera_compressed_format.cameras) m.042zv3q) (JOIN digicams.digital_camera.camera_sensor_manufacturer m.0nk5b))))
+
+The corresponding RP is T-4.
+
+Example 6
+
+Question:
+who is the quotation her voice is full of money. attributed to?
+
+Knowledge Graph information for this question:
+- The starting entities are [m.048jrqw, media_common.quotation, Her voice is full of money.]
+- The knowledge graph tuples are:
+[
+["fictional_universe.fictional_character", "media_common.quotation.spoken_by_character", "media_common.quotation"],
+["people.person", "rev_media_common.quotation.incorrectly_attributed_to", "media_common.quotation"],
+["media_common.quotation", "media_common.quotation_subject.quotations_about_this_subject", "media_common.quotation_subject"],
+["opera.opera_character_voice", "opera.opera_character_voice.character", "opera.opera_character"],
+["media_common.quotation", "media_common.quotation.author", "people.person"],
+["media_common.quotation", "media_common.quotation.incorrectly_attributed_to", "people.person"],
+["people.person", "media_common.quotation.incorrectly_attributed_to", "media_common.quotation"],
+["media_common.quotation", "media_common.quotation_addressee.quotations", "media_common.quotation_addressee"],
+["media_common.quotation_subject", "media_common.quotation.subjects", "media_common.quotation"],
+["media_common.quotation", "media_common.quotation.spoken_by_character", "fictional_universe.fictional_character"],
+["opera.opera_character", "opera.opera_character.operas_appears_in", "opera.opera_character_voice"],
+["media_common.quotation_source", "media_common.quotation.source", "media_common.quotation"],
+["fictional_universe.fictional_character", "fictional_universe.fictional_character.quotations", "media_common.quotation"],
+["media_common.quotation_addressee", "media_common.quotation_addressee.quotations", "media_common.quotation"],
+["media_common.quotation", "fictional_universe.fictional_character.quotations", "fictional_universe.fictional_character"],
+["media_common.quotation", "people.person.quotations", "people.person"],
+["media_common.quotation", "media_common.quotation.source", "media_common.quotation_source"],
+["people.person", "people.person.quotations", "media_common.quotation"],
+["media_common.quotation", "media_common.quotation.subjects", "media_common.quotation_subject"],
+["media_common.quotation", "media_common.quotation_source.quotations", "media_common.quotation_source"],
+["media_common.quotation_source", "media_common.quotation_source.quotations", "media_common.quotation"],
+["media_common.quotation_subject", "media_common.quotation_subject.quotations_about_this_subject", "media_common.quotation"],
+["media_common.quotation", "media_common.quotation.addressee", "media_common.quotation_addressee"],
+["people.person", "media_common.quotation.author", "media_common.quotation"]
+]
+
+**S-expression**:
+(AND opera.opera_character (JOIN fictional_universe.fictional_character.quotations (JOIN media_common.quotation.source (JOIN (R media_common.quotation.source) m.048jrqw))))
+
+The corresponding RP is T-5.
+
+Your task is to generate an S‐expression to answer the given question using the entity and relations in knowledge graph tuples. Your answer MUST be a single valid Lisp‐style expression and doesn't include other text.
