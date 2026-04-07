@@ -1,0 +1,9 @@
+Question:
+{{ question }}
+
+Knowledge Graph information for this question:
+- The starting entity is [{{ starting_entity }}, {{ starting_entity_id }}]
+- The knowledge graph tuples are:
+{{ kg_tuples }}
+
+**S-expression:**
